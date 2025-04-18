@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Noto+Serif+TC:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Noto Sans TC', sans-serif;
+    color: theme('colors.wedding.text');
+  }
+  
+  body {
+    @apply bg-wedding-secondary min-h-screen;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif text-wedding-dark;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-6 py-3 rounded-lg transition-all duration-300 font-medium text-white shadow-md hover:shadow-lg transform hover:-translate-y-1;
+  }
+  
+  .btn-primary {
+    @apply btn bg-wedding-primary hover:bg-wedding-accent text-wedding-dark;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-wedding-dark hover:bg-opacity-90;
+  }
+  
+  .card {
+    @apply bg-white rounded-xl shadow-md p-6 transition-shadow duration-300 hover:shadow-lg;
+  }
+  
+  .input-field {
+    @apply w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-wedding-accent focus:border-transparent;
+  }
+  
+  .label {
+    @apply block text-sm font-medium text-wedding-dark mb-1;
+  }
+}
+
+/* 花瓣飄落動畫元素 */
+.petal {
+  @apply absolute pointer-events-none opacity-70;
+  animation: fall linear forwards;
+}
+
+@keyframes fall {
+  to {
+    transform: translateY(100vh) rotate(360deg);
+  }
+}
