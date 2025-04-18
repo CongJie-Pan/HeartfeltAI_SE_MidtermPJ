@@ -1,21 +1,39 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProgressIndicator from '../components/ProgressIndicator';
 import { useWedding } from '../context/WeddingContext';
 import { GuestInfo } from '../types';
 
-// 虛擬邀請函模板圖片（單一圖片）
+// 虛擬邀請函背景圖片
 const templateImage = 'https://images.unsplash.com/photo-1523438885200-e635ba2c371e?q=80&w=600&auto=format&fit=crop';
 
 // 邀請函預覽頁面組件
-// 該頁面顯示為每個賓客生成的邀請卡圖片預覽，允許用戶編輯或刪除
+// 該頁面顯示邀請函預覽，並允許修改個性化邀請函文字
 const PreviewPage: React.FC = () => {
   const { state, dispatch, nextStep, prevStep } = useWedding();
   const [selectedGuest, setSelectedGuest] = useState<GuestInfo | null>(null);
   const [editMode, setEditMode] = useState(false);
-  const [designFeedback, setDesignFeedback] = useState('');
+  const [invitationFeedback, setInvitationFeedback] = useState('');
   
-  // 模擬生成邀請函內容 (背景用，不在此頁面顯示)
+  // 頁面載入時，確保所有賓客都有邀請函文字
+  useEffect(() => {
+    // 檢查所有賓客，為沒有邀請函文字的賓客生成文字
+    state.guests.forEach(guest => {
+      if (!guest.invitationContent) {
+        const content = generateInvitation(guest);
+        dispatch({
+          type: 'UPDATE_INVITATION',
+          payload: {
+            guestId: guest.id,
+            content,
+            status: 'generated'
+          }
+        });
+      }
+    });
+  }, [state.guests, dispatch]);
+  
+  // 模擬生成邀請函內容
   const generateInvitation = (guest: GuestInfo) => {
     // 實際使用時，這應該是從API請求獲取的內容
     return `
@@ -36,9 +54,10 @@ const PreviewPage: React.FC = () => {
     `;
   };
   
-  // 處理預覽邀請卡
+  // 處理預覽邀請函
   const handlePreviewInvitation = (guest: GuestInfo) => {
-    // 如果邀請函尚未生成，則模擬生成背景文字（但不顯示）
+    // 如果邀請函文字尚未生成，則立即生成
+    let currentGuest = guest;
     if (!guest.invitationContent) {
       const content = generateInvitation(guest);
       dispatch({
@@ -49,35 +68,52 @@ const PreviewPage: React.FC = () => {
           status: 'generated'
         }
       });
+      // 更新當前賓客對象，包含新生成的內容
+      currentGuest = {
+        ...guest,
+        invitationContent: content,
+        status: 'generated'
+      };
     }
-    setSelectedGuest(guest);
+    setSelectedGuest(currentGuest);
     setEditMode(false);
   };
   
   // 處理編輯模式切換
   const handleEditMode = () => {
     if (selectedGuest) {
-      setDesignFeedback('');
+      setInvitationFeedback('');
       setEditMode(true);
     }
   };
   
   // 處理保存編輯
-  const handleSaveDesignFeedback = () => {
-    if (selectedGuest && designFeedback.trim()) {
-      // 在實際應用中，這裡會發送設計反饋給AI並請求重新生成卡片
+  const handleSaveInvitationFeedback = () => {
+    if (selectedGuest && invitationFeedback.trim()) {
+      // 在實際應用中，這裡會發送反饋給AI並請求重新生成邀請函文字
       // 現在我們只是模擬這個過程
-      alert('感謝您的反饋！AI正在根據您的需求重新設計邀請卡。');
       
-      // 仍然保留文字內容不變
+      // 模擬AI根據反饋生成的新文字 (這裡簡單示範)
+      const newContent = `${selectedGuest.invitationContent}\n\n根據您的反饋，我們增加了這段個性化內容：\n${invitationFeedback}`;
+      
+      // 模擬更新文字內容
       dispatch({
         type: 'UPDATE_INVITATION',
         payload: {
           guestId: selectedGuest.id,
-          content: selectedGuest.invitationContent || generateInvitation(selectedGuest),
+          content: newContent,
           status: 'edited'
         }
       });
+      
+      // 更新當前選中的賓客對象
+      setSelectedGuest({
+        ...selectedGuest,
+        invitationContent: newContent,
+        status: 'edited'
+      });
+      
+      alert('感謝您的反饋！已根據您的需求更新邀請函文字。');
       setEditMode(false);
     }
   };
@@ -167,15 +203,15 @@ const PreviewPage: React.FC = () => {
       animate="visible"
       exit="exit"
     >
-      <h1 className="text-3xl font-serif text-center font-bold mb-8 text-wedding-dark">邀請卡設計預覽</h1>
+      <h1 className="text-3xl font-serif text-center font-bold mb-8 text-wedding-dark">電子邀請函預覽</h1>
       
       {/* 進度指示器 */}
       <ProgressIndicator />
       
-      {/* 賓客邀請卡網格 */}
+      {/* 賓客邀請函網格 */}
       <div className="mt-8">
-        <h2 className="text-xl font-medium mb-4 text-wedding-dark">賓客邀請卡預覽</h2>
-        <p className="text-sm text-gray-500 mb-6">點擊卡片查看邀請卡設計，邀請函文字內容將在下一步顯示</p>
+        <h2 className="text-xl font-medium mb-4 text-wedding-dark">賓客邀請函預覽</h2>
+        <p className="text-sm text-gray-500 mb-6">點擊查看邀請函預覽，可在右側修改個性化文字內容</p>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {state.guests.map((guest) => (
@@ -200,17 +236,24 @@ const PreviewPage: React.FC = () => {
               <h3 className="font-medium text-lg mb-2">{guest.name}</h3>
               <p className="text-xs text-gray-500 mb-4">{guest.relationship} | {guest.email}</p>
               
-              {/* 邀請卡預覽圖片 */}
+              {/* 邀請函預覽 */}
               <div className="h-48 mb-3 overflow-hidden rounded-lg shadow-sm flex items-center justify-center bg-wedding-secondary">
                 {guest.invitationContent ? (
-                  <img 
-                    src={templateImage} 
-                    alt="邀請卡預覽" 
-                    className="w-full h-full object-cover" 
-                  />
+                  <div className="w-full h-full relative">
+                    <img 
+                      src={templateImage} 
+                      alt="邀請函背景" 
+                      className="w-full h-full object-cover absolute inset-0 opacity-40" 
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center p-4">
+                      <p className="text-xs text-center text-wedding-dark line-clamp-6 relative z-10">
+                        {guest.invitationContent.substring(0, 120)}...
+                      </p>
+                    </div>
+                  </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full">
-                    <span className="text-gray-400 mb-2">點擊生成邀請卡</span>
+                    <span className="text-gray-400 mb-2">點擊生成邀請函</span>
                     <button 
                       className="px-4 py-1 bg-wedding-primary rounded-full text-xs"
                       onClick={(e) => {
@@ -226,8 +269,8 @@ const PreviewPage: React.FC = () => {
               
               <div className="flex justify-between items-center">
                 <span className="text-xs text-gray-500">
-                  {guest.status === 'edited' ? '已自訂' : 
-                   guest.status === 'generated' ? '已生成' : 
+                  {guest.status === 'edited' ? '已自訂文字' : 
+                   guest.status === 'generated' ? '已生成文字' : 
                    guest.status === 'sent' ? '已發送' : '待生成'}
                 </span>
                 <button 
@@ -237,7 +280,7 @@ const PreviewPage: React.FC = () => {
                     handlePreviewInvitation(guest);
                   }}
                 >
-                  {guest.invitationContent ? '查看設計' : '生成邀請卡'}
+                  {guest.invitationContent ? '查看預覽' : '生成邀請函'}
                 </button>
               </div>
             </motion.div>
@@ -258,11 +301,11 @@ const PreviewPage: React.FC = () => {
           className={`btn-primary ${!canProceed ? 'opacity-50 cursor-not-allowed' : ''}`}
           disabled={!canProceed}
         >
-          確認設計，下一步
+          確認邀請函，下一步
         </button>
       </div>
       
-      {/* 邀請卡預覽模態框 - 毛玻璃效果 */}
+      {/* 邀請函預覽模態框 - 毛玻璃效果 */}
       <AnimatePresence>
         {selectedGuest && (
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
@@ -281,22 +324,31 @@ const PreviewPage: React.FC = () => {
               exit="exit"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* 左側邀請卡預覽區域 */}
+              {/* 左側邀請函預覽區域 */}
               <div className={`${editMode ? 'w-1/2' : 'w-full'}`}>
-                {/* 邀請卡圖片（純圖片，不疊加內容） */}
-                <div className="w-full aspect-[4/3]">
-                  <img 
-                    src={templateImage} 
-                    alt="邀請卡預覽" 
-                    className="w-full h-full object-cover" 
-                  />
+                {/* 邀請函內容預覽 */}
+                <div className="relative">
+                  <div className="w-full aspect-[4/3] bg-wedding-secondary">
+                    <img 
+                      src={templateImage} 
+                      alt="邀請函背景" 
+                      className="w-full h-full object-cover opacity-30" 
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center p-8">
+                      <div className="bg-white bg-opacity-70 p-6 rounded-lg w-full max-h-full overflow-y-auto">
+                        <p className="text-sm text-wedding-dark whitespace-pre-line">
+                          {selectedGuest.invitationContent}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 
                 {/* 賓客資訊和按鈕 - 僅在非編輯模式下顯示 */}
                 {!editMode && (
                   <div className="p-6">
                     <h3 className="text-xl font-medium mb-2 text-wedding-dark">
-                      {selectedGuest.name} 的邀請卡
+                      {selectedGuest.name} 的邀請函
                     </h3>
                     <p className="text-xs text-gray-500 mb-6">
                       {selectedGuest.relationship} | {selectedGuest.email}
@@ -308,7 +360,7 @@ const PreviewPage: React.FC = () => {
                         onClick={handleEditMode}
                         className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
                       >
-                        修改設計
+                        修改邀請函文字
                       </button>
                       <button
                         onClick={closeModal}
@@ -332,18 +384,24 @@ const PreviewPage: React.FC = () => {
                 >
                   <div className="p-6">
                     <h3 className="text-xl font-medium mb-4 text-wedding-dark">
-                      修改邀請卡設計
+                      個性化邀請函文字
                     </h3>
                     
                     <p className="text-sm text-gray-500 mb-4">
-                      為 <span className="font-medium">{selectedGuest.name}</span> 的邀請卡提供設計建議
+                      為 <span className="font-medium">{selectedGuest.name}</span> 提供個性化邀請函文字建議
                     </p>
+                    
+                    <div className="bg-white border border-gray-200 p-3 rounded-lg mb-4 text-sm max-h-36 overflow-y-auto">
+                      <p className="text-gray-700 whitespace-pre-line">
+                        {selectedGuest.invitationContent}
+                      </p>
+                    </div>
                     
                     <textarea
                       className="w-full h-48 p-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-wedding-accent focus:border-transparent resize-none mb-4"
-                      value={designFeedback}
-                      onChange={(e) => setDesignFeedback(e.target.value)}
-                      placeholder="請告訴我們您想要如何修改邀請卡的設計？例如：顏色、版面配置、風格等方面的建議..."
+                      value={invitationFeedback}
+                      onChange={(e) => setInvitationFeedback(e.target.value)}
+                      placeholder="請告訴我們您想要如何調整邀請函的文字內容？例如：語氣、用詞、增加特別的祝福語或提及特定回憶..."
                     />
                     
                     {/* 按鈕區域 */}
@@ -355,10 +413,10 @@ const PreviewPage: React.FC = () => {
                         取消
                       </button>
                       <button
-                        onClick={handleSaveDesignFeedback}
+                        onClick={handleSaveInvitationFeedback}
                         className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
                       >
-                        重新生成
+                        重新生成文字
                       </button>
                     </div>
                   </div>
