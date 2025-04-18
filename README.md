@@ -1,4 +1,3 @@
-
 # HeartfeltAI | 智心相印
 
 ## AI婚禮邀請函系統
@@ -136,5 +135,89 @@ DeepSeek R1整合新人和賓客資訊，生成初步的邀請函內容。這些
 - **小型私密婚禮**：強調親密感與溫馨
 - **大型盛大婚禮**：批量生成個性化邀請函
 - **目的地婚禮**：提供旅行資訊與細節的整合邀請函
+
+## 操作指南
+
+### 安裝與啟動
+
+1. **克隆儲存庫**
+```bash
+git clone https://github.com/yourusername/wedding-invitation-generator.git
+cd wedding-invitation-generator
+```
+
+2. **前端安裝與啟動**
+```bash
+cd wedding-invitation-generator
+npm install
+npm run dev
+```
+
+3. **後端安裝與啟動**
+```bash
+cd wedding-invitation-generator/backend
+npm install
+npm start
+```
+
+### 問題修復記錄
+
+#### 賓客資料輸入問題修復
+
+系統在添加賓客資料時，前端未正確將coupleInfoId傳遞給後端API，導致出現「無法保存賓客資料」的錯誤。
+
+修復方案：
+1. 在前端GuestInfoPage.tsx中，修改handleSubmit函數以獲取coupleInfoId
+2. 添加了coupleInfo獲取及錯誤處理邏輯
+3. 確保在提交賓客資料時包含必要的coupleInfoId欄位
+
+#### 日誌檢視工具新增
+
+為方便開發者查看SQL日誌，新增了專用工具：
+
+1. **SQL日誌查詢工具**
+   - 位置：`backend/utils/logViewer.js`
+   - 功能：解析日誌文件，識別並格式化SQL查詢記錄
+   
+2. **命令行界面**
+   - 位置：`backend/scripts/viewSqlLogs.js`
+   - 使用方式：`node scripts/viewSqlLogs.js [--save] [--path customPath]`
+   - 選項：
+     - --save：將SQL日誌保存到單獨文件
+     - --path：指定自定義日誌路徑
+
+### 部署指南
+
+#### 整合部署方案
+
+系統支持將前後端整合部署，提供單一入口點訪問：
+
+1. **使用自動部署腳本**
+```bash
+node deploy.js
+```
+此腳本會自動執行以下操作：
+- 安裝前後端依賴
+- 構建前端靜態文件
+- 將前端構建結果複製到後端public目錄
+- 運行測試確保系統正常
+
+2. **手動部署步驟**
+   - 在前端目錄運行 `npm run build`
+   - 將生成的 `dist` 目錄內容複製到後端的 `public` 目錄
+   - 在後端目錄運行 `NODE_ENV=production npm start`
+
+3. **部署後訪問**
+   - 前端與API都可通過 `http://localhost:5000` 訪問
+   - API路徑統一為 `/api/*`
+   - 前端路由由後端自動處理
+
+#### 環境變數配置
+
+生產環境部署需設置以下環境變數：
+- `NODE_ENV=production`：啟用生產模式
+- `PORT`：服務運行端口 (預設5000)
+- `FRONTEND_URL`：前端訪問URL (整合部署時同後端URL)
+- `DATABASE_URL`：數據庫連接字符串
 
 *「智心相印」- 以AI之智，傳遞心之真情*
