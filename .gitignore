@@ -1,0 +1,115 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# 依賴和構建
+node_modules
+dist
+dist-ssr
+*.local
+build/
+coverage/
+.cache/
+.parcel-cache/
+.output/
+.nuxt/
+.next/
+out/
+
+# 環境和敏感文件
+.env
+.env.*
+.env.local
+.env.development
+.env.test
+.env.production
+*.pem
+*.key
+*.crt
+*.p12
+
+# 敏感設定
+config/secrets.json
+**/config/secrets.*
+**/*credentials*
+**/*secret*
+
+# 資料庫
+*.sqlite
+*.sqlite3
+*.db
+dev.db
+
+# 編輯器目錄和文件
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.history/
+*.sublime-*
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+
+# 作業系統生成的檔案
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.directory
+._*
+.Spotlight-V100
+.Trashes
+
+# 臨時和快取檔案
+.tmp/
+.temp/
+tmp/
+temp/
+*.tmp
+*.temp
+.sass-cache/
+*.pid
+*.seed
+.eslintcache
+.stylelintcache
+.prettiercache
+
+# 套件管理器鎖定和日誌檔案
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+.pnpm-debug.log
+package-lock.json.bak
+yarn.lock.bak
+pnpm-lock.yaml.bak
+
+# 測試生成的文件
+coverage/
+.nyc_output/
+junit.xml
+.jest-*
+.cypress/
+cypress/videos/
+cypress/screenshots/
+
+# 部署相關
+.vercel
+.netlify
+.firebase/
+.serverless/
+.cloudflare/
+.pm2/
