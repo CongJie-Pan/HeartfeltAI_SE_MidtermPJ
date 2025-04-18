@@ -20,6 +20,10 @@ if (!fs.existsSync(logDir)) {
  * Lazy initialization pattern for Prisma client
  * Only creates the Prisma instance when it's first needed
  * This helps optimize resources and prevent connection issues on startup
+ * 
+ * The use of a private variable (_prisma) with a getter function (getPrisma)
+ * ensures that the database connection is only established when needed,
+ * which reduces unnecessary resource consumption during application startup
  */
 let _prisma = null;
 const getPrisma = () => {
@@ -31,9 +35,10 @@ const getPrisma = () => {
 
 /**
  * Custom Winston format configuration
- * - Adds timestamps to all logs
- * - Includes error stacks when available
- * - Formats data using JSON for structured logging
+ * - Adds timestamps to all logs in YYYY-MM-DD HH:mm:ss format for readability
+ * - Includes error stacks when available for detailed debugging
+ * - Formats data using JSON for structured logging and better parsability
+ * - The splat format allows for string interpolation with multiple parameters
  */
 const customFormat = format.combine(
   format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -47,15 +52,27 @@ const customFormat = format.combine(
  * Extends the base Transport class to provide logging to database
  * Only logs important events (error, warn, info) to the database
  * Only active in production environment to avoid unnecessary database writes
+ * 
+ * This transport implementation follows the Winston Transport interface
+ * and defines a custom log method that writes to the Prisma database
  */
 class PrismaTransport extends Transport {
   constructor(opts) {
     super(opts);
     this.name = 'prisma';
-    this.level = opts.level || 'info';
+    this.level = opts.level || 'info'; // Default level is info
   }
 
+  /**
+   * Log method implementation for the custom transport
+   * Writes log data to the database via Prisma client
+   * 
+   * @param {Object} info - Log information object
+   * @param {Function} callback - Callback function to execute after logging
+   */
   async log(info, callback) {
+    // Emit 'logged' event asynchronously using setImmediate
+    // This ensures the event doesn't block the logging process
     setImmediate(() => {
       this.emit('logged', info);
     });
@@ -79,27 +96,31 @@ class PrismaTransport extends Transport {
       console.error('Error writing log to database:', error);
     }
 
-    callback();
+    callback(); // Execute callback after logging
   }
 }
 
 /**
  * Main Winston logger configuration
  * Sets up multiple transports for comprehensive logging:
- * - Console for development visibility
- * - Error log file for critical issues
- * - Combined log file for all log levels
- * - Database logging in production for important events
+ * - Console for development visibility with colorized output
+ * - Error log file for critical issues, capturing only error level logs
+ * - Combined log file for all log levels to provide complete history
+ * - Database logging in production for important events with persistence
+ * 
+ * The log level varies by environment:
+ * - Development: 'debug' level for detailed troubleshooting
+ * - Production: 'info' level to reduce noise and focus on important events
  */
 const logger = createLogger({
   level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
   format: customFormat,
-  defaultMeta: { service: 'wedding-invitation-api' },
+  defaultMeta: { service: 'wedding-invitation-api' }, // Metadata added to all logs
   transports: [
     // Console logging with colorized output for better readability
     new transports.Console({
       format: format.combine(
-        format.colorize(),
+        format.colorize(), // Adds colors to log levels for better visibility
         format.printf(info => `${info.timestamp} ${info.level}: ${info.message} ${info.stack || ''}`)
       )
     }),
@@ -115,15 +136,16 @@ const logger = createLogger({
     }),
     
     // Database logging - only in production and only for important logs
+    // Uses spread operator to conditionally add the transport based on environment
     ...(process.env.NODE_ENV === 'production' ? [new PrismaTransport({ level: 'info' })] : [])
   ],
-  // Exception handling
+  // Exception handling - captures uncaught exceptions to a dedicated log file
   exceptionHandlers: [
     new transports.File({ 
       filename: path.join(logDir, 'exceptions.log') 
     })
   ],
-  // Prevents process exit on uncaught exceptions
+  // Prevents process exit on uncaught exceptions, allowing graceful handling
   exitOnError: false
 });
 
@@ -131,6 +153,7 @@ const logger = createLogger({
  * Production environment logging optimization
  * Limits console output to only errors in production
  * This reduces unnecessary console output in production servers
+ * while still ensuring critical errors are visible in the console
  */
 if (process.env.NODE_ENV === 'production') {
   logger.transports.forEach((t) => {

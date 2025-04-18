@@ -1,142 +1,210 @@
 /**
- * Metrics Middleware
+ * Metrics Middleware Module
  * 
- * Implements application metrics collection and monitoring using Prometheus.
- * Tracks key performance indicators like request duration, count, and error rates.
+ * 實現應用程式的指標收集和監控，使用 Prometheus 格式收集以下關鍵指標：
+ * - HTTP 請求時間
+ * - 端點使用頻率
+ * - 錯誤率
+ * - API 限流計數
  * 
- * Prometheus is an open-source systems monitoring and alerting toolkit originally
- * built at SoundCloud. It collects and stores time series data with powerful 
- * querying capabilities, making it ideal for monitoring application performance.
+ * 這些指標可以被 Prometheus 伺服器抓取，並透過 Grafana 等工具建立視覺化儀表板
+ * 適用於識別系統瓶頸、追蹤效能問題和監控系統健康狀況
  */
-const prometheusClient = require('prom-client');
+const client = require('prom-client');
+const logger = require('../config/logger');
 
-// Enable collection of default metrics (CPU, memory, event loop, etc.)
-prometheusClient.collectDefaultMetrics();
+// Register default metrics (memory, CPU, event loop, etc.)
+client.collectDefaultMetrics({ prefix: 'wedding_api_' });
 
 /**
- * HTTP Request Duration Histogram
+ * HTTP Request Duration Metric
  * 
- * Measures the duration of HTTP requests in milliseconds.
- * Categorized by method, route path, and response status code.
- * Uses histogram buckets to track distribution of request durations.
+ * Measures how long HTTP requests take to complete in seconds
+ * Categorized by route path, HTTP method, and status code
+ * 
+ * Histogram buckets allow percentile calculations to identify:
+ * - p50 (median response time)
+ * - p95 (95% of requests complete within this time)
+ * - p99 (99% of requests complete within this time)
+ * 
+ * Critical for performance monitoring and SLA adherence
  */
-const httpRequestDurationMicroseconds = new prometheusClient.Histogram({
-  name: 'http_request_duration_ms',
-  help: 'Duration of HTTP requests in ms',
+const httpRequestDurationMicroseconds = new client.Histogram({
+  name: 'wedding_api_http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
   labelNames: ['method', 'route', 'status_code'],
-  buckets: [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
+  // Buckets in seconds - from 10ms to 10s
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 3, 5, 10]
 });
 
 /**
  * HTTP Request Counter
  * 
- * Counts the total number of HTTP requests received.
- * Categorized by method, route path, and response status code.
- * Useful for tracking traffic patterns and endpoint usage.
+ * Counts total number of HTTP requests received
+ * Categorized by route path, HTTP method, and status code
+ * 
+ * Useful for tracking:
+ * - Overall API traffic patterns
+ * - Most frequently used endpoints
+ * - Unusual spikes in request volume
  */
-const httpRequestCounter = new prometheusClient.Counter({
-  name: 'http_requests_total',
-  help: 'Counter for total requests received',
+const httpRequestCounter = new client.Counter({
+  name: 'wedding_api_http_requests_total',
+  help: 'Total number of HTTP requests',
   labelNames: ['method', 'route', 'status_code']
 });
 
 /**
  * HTTP Error Counter
  * 
- * Counts the total number of HTTP errors (status code >= 400).
- * Categorized by method, route path, and response status code.
- * Helps identify problematic endpoints and client/server errors.
+ * Counts HTTP errors (status codes 4xx and 5xx)
+ * Categorized by route path, HTTP method, and status code
+ * 
+ * Critical for monitoring system reliability:
+ * - Client errors (4xx) may indicate API misuse or invalid inputs
+ * - Server errors (5xx) indicate internal application issues
+ * - High error rates trigger alerts for immediate investigation
  */
-const errorCounter = new prometheusClient.Counter({
-  name: 'http_errors_total',
-  help: 'Counter for total errors',
-  labelNames: ['method', 'route', 'status_code']
+const httpErrorCounter = new client.Counter({
+  name: 'wedding_api_http_errors_total',
+  help: 'Total number of HTTP errors',
+  labelNames: ['method', 'route', 'status_code', 'error_type']
 });
 
 /**
  * API Rate Limit Counter
  * 
- * Counts how many times rate limits have been hit.
- * Categorized by method, route path, and client IP address.
- * Helps identify potential abuse or needed capacity adjustments.
+ * Counts instances where API rate limits were enforced
+ * Helps detect potential abuse or misconfigured clients
+ * 
+ * Used to:
+ * - Adjust rate limits based on actual usage patterns
+ * - Identify IPs/clients that frequently hit limits
+ * - Support security monitoring for potential API abuse
  */
-const apiLimitCounter = new prometheusClient.Counter({
-  name: 'api_rate_limit_total',
-  help: 'Counter for API rate limit hits',
+const apiRateLimitCounter = new client.Counter({
+  name: 'wedding_api_rate_limit_total',
+  help: 'Total number of rate limited requests',
   labelNames: ['method', 'route', 'ip']
 });
 
 /**
- * Metrics Collection Middleware
+ * Metrics Middleware Function
  * 
- * Captures timing and counting metrics for each request.
- * Uses the response 'finish' event to ensure metrics are captured
- * even for requests that error out or are otherwise interrupted.
+ * Captures timing and counting metrics for each request
+ * Implements end-to-end request duration measurement
+ * Records both successful requests and errors
  * 
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
- * @param {Function} next - Express next middleware function
+ * Process flow:
+ * 1. Starts timing when request begins
+ * 2. Captures route information
+ * 3. Intercepts response to record metrics before sending
+ * 4. Updates all relevant metrics based on response status
  */
 const metricsMiddleware = (req, res, next) => {
-  const start = Date.now();
+  // Skip metrics collection for the metrics endpoint itself to avoid recursive metrics
+  if (req.path === '/metrics') {
+    return next();
+  }
+
+  // Track which route is handling the request - extracting base route pattern
+  // Removes route parameters to avoid high cardinality metrics
+  const route = req.originalUrl.split('?')[0] || req.path;
   
-  // Collect metrics when response finishes
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    const { statusCode } = res;
-    const { method, originalUrl } = req;
+  // Start timer to measure request duration
+  const end = httpRequestDurationMicroseconds.startTimer();
+  
+  // Store the original end() method
+  const originalEnd = res.end;
+  
+  // Override the response end method to capture metrics
+  res.end = function(...args) {
+    // Get the status code of the response
+    const statusCode = res.statusCode;
     
-    let routePath = originalUrl;
-    // Try to get route path instead of specific URL (e.g. /api/users/123 -> /api/users/:id)
-    if (req.route && req.route.path) {
-      routePath = req.baseUrl + req.route.path;
-    }
+    // Record request duration with method, route, and status
+    end({ method: req.method, route, status_code: statusCode });
     
-    // Record request duration
-    httpRequestDurationMicroseconds
-      .labels(method, routePath, statusCode)
-      .observe(duration);
-      
-    // Increment request counter
-    httpRequestCounter
-      .labels(method, routePath, statusCode)
-      .inc();
-      
-    // If error response, increment error counter
+    // Count requests with labels
+    httpRequestCounter.inc({
+      method: req.method,
+      route,
+      status_code: statusCode
+    });
+    
+    // Check if this is an error response (4xx or 5xx)
     if (statusCode >= 400) {
-      errorCounter
-        .labels(method, routePath, statusCode)
-        .inc();
+      const errorType = statusCode >= 500 ? 'server_error' : 'client_error';
+      
+      // Increment error counter with relevant labels
+      httpErrorCounter.inc({
+        method: req.method,
+        route,
+        status_code: statusCode,
+        error_type: errorType
+      });
+      
+      // Log error for further investigation
+      logger.warn(`HTTP ${statusCode} error for ${req.method} ${route}`);
     }
-  });
+    
+    // Check if this is a rate limited response
+    if (statusCode === 429) {
+      // Increment rate limit counter
+      apiRateLimitCounter.inc({
+        method: req.method,
+        route,
+        ip: req.ip
+      });
+      
+      // Log rate limiting for security monitoring
+      logger.warn(`Rate limit applied for IP: ${req.ip} on ${req.method} ${route}`);
+    }
+    
+    // Call the original end method to complete the response
+    return originalEnd.apply(this, args);
+  };
   
   next();
 };
 
 /**
- * Metrics Endpoint Handler
+ * Metrics Handler Function
  * 
- * Serves Prometheus-formatted metrics for scraping.
- * Can be disabled via environment variable for security in certain deployments.
+ * Serves Prometheus-formatted metrics for scraping
+ * Collects all registered metrics and returns them
  * 
- * @param {Object} req - Express request object
- * @param {Object} res - Express response object
+ * This endpoint is typically accessed by:
+ * - Prometheus server on a regular interval (e.g., every 15s)
+ * - Monitoring dashboards that need current metrics
+ * - Health check systems that verify metrics collection
  */
 const metricsHandler = async (req, res) => {
-  if (!process.env.ENABLE_METRICS) {
-    return res.status(404).json({ message: 'Metrics not enabled' });
-  }
-  
   try {
-    res.set('Content-Type', prometheusClient.register.contentType);
-    res.end(await prometheusClient.register.metrics());
-  } catch (err) {
-    res.status(500).end(err);
+    // Set Prometheus-specific content type
+    res.set('Content-Type', client.register.contentType);
+    
+    // Get all metrics in Prometheus text format
+    const metrics = await client.register.metrics();
+    
+    // Send metrics response
+    res.end(metrics);
+    
+    logger.debug('Metrics scraped successfully');
+  } catch (error) {
+    // Log metrics collection errors
+    logger.error('Error collecting metrics', { error: error.message });
+    
+    // Return error response
+    res.status(500).end('Error collecting metrics');
   }
 };
 
 module.exports = {
   metricsMiddleware,
   metricsHandler,
-  apiLimitCounter
+  httpRequestDurationMicroseconds,
+  httpRequestCounter,
+  httpErrorCounter,
+  apiRateLimitCounter
 }; 

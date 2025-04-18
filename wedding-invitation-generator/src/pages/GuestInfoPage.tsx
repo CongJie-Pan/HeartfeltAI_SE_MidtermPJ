@@ -131,31 +131,55 @@ const GuestInfoPage: React.FC = () => {
       setIsLoading(true);
       setError(null);
       
-      if (editingGuest) {
-        // Update existing guest
-        const guestData = { ...values, id: editingGuest.id };
-        await api.guests.update(editingGuest.id, guestData);
-        
-        // Update frontend state
-        dispatch({
-          type: 'UPDATE_GUEST',
-          payload: guestData
-        });
-        setEditingGuest(null);
-      } else {
-        // Add new guest
-        const newGuest = { ...values, id: crypto.randomUUID() };
-        const response = await api.guests.add(newGuest);
-        
-        // Use backend response to update frontend state
-        dispatch({
-          type: 'ADD_GUEST',
-          payload: response.data || newGuest
-        });
+      // get coupleInfoId, ensure there is valid couple information
+      if (!state.coupleInfo || !state.coupleInfo.groomName || !state.coupleInfo.brideName) {
+        setError('missing couple information, please fill in the couple information first.');
+        setSubmitting(false);
+        setIsLoading(false);
+        return;
       }
       
-      // Reset form after successful submission
-      resetForm();
+      // get coupleInfoId from backend
+      try {
+        const coupleResponse = await api.couple.get();
+        const coupleInfoId = coupleResponse.data?.id;
+        
+        if (!coupleInfoId) {
+          setError('無法獲取新人資料ID，請確保已保存新人資料');
+          setSubmitting(false);
+          setIsLoading(false);
+          return;
+        }
+        
+        if (editingGuest) {
+          // Update existing guest
+          const guestData = { ...values, id: editingGuest.id, coupleInfoId };
+          await api.guests.update(editingGuest.id, guestData);
+          
+          // Update frontend state
+          dispatch({
+            type: 'UPDATE_GUEST',
+            payload: guestData
+          });
+          setEditingGuest(null);
+        } else {
+          // Add new guest
+          const newGuest = { ...values, id: crypto.randomUUID(), coupleInfoId };
+          const response = await api.guests.add(newGuest);
+          
+          // Use backend response to update frontend state
+          dispatch({
+            type: 'ADD_GUEST',
+            payload: response.data || newGuest
+          });
+        }
+        
+        // Reset form after successful submission
+        resetForm();
+      } catch (coupleError) {
+        console.error('Error getting couple info:', coupleError);
+        setError('無法獲取新人資料，請確保已正確填寫並保存新人資料。');
+      }
     } catch (err) {
       console.error('Error saving guest information:', err);
       setError('無法保存賓客資料，請稍後再試。');

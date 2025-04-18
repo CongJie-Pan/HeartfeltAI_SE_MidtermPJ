@@ -21,6 +21,7 @@ const { metricsMiddleware, metricsHandler } = require('./middlewares/metricsMidd
 const configSecurity = require('./config/security');
 const { authenticateToken, adminOnly } = require('./middlewares/auth');
 const errorHandler = require('./middlewares/errorHandler');
+const { PrismaClient } = require('@prisma/client');
 
 /**
  * Import route modules
@@ -149,6 +150,62 @@ app.use(errorHandler);
 app.use((req, res) => {
   logger.warn(`Route not found: ${req.method} ${req.url}`, { ip: req.ip });
   res.status(404).json({ message: '找不到請求的資源' });
+});
+
+// Initialize Prisma with query logging
+const prisma = new PrismaClient({
+  log: [
+    { level: 'query', emit: 'event' },
+    { level: 'error', emit: 'stdout' },
+  ],
+});
+
+// Add SQL query logging
+prisma.$on('query', (e) => {
+  logger.debug('Prisma Query', {
+    query: e.query,
+    params: e.params,
+    duration: e.duration,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Deployment instructions endpoint
+app.get('/deployment-info', (req, res) => {
+  res.status(200).json({
+    message: '部署整合說明',
+    steps: [
+      '1. 在前端根目錄執行 npm run build 構建靜態檔案',
+      '2. 將構建的 dist 資料夾內容複製到後端 public 資料夾',
+      '3. 在後端使用 NODE_ENV=production 啟動伺服器',
+      '4. 設定 .env 中的 FRONTEND_URL 變數為相同的主機位址'
+    ],
+    example: 'NODE_ENV=production npm start',
+    endpoints: {
+      api: '/api/*',
+      frontend: '/*'
+    }
+  });
+});
+
+// Enable static file serving from the public directory
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Register API routes
+app.use('/api/health', healthRoutes);
+app.use('/api/couple', coupleRoutes);
+app.use('/api/guests', guestRoutes);
+app.use('/api/invitations', invitationRoutes);
+app.use('/api/emails', emailRoutes);
+
+// Handle all other requests with frontend app (SPA support)
+app.get('*', (req, res) => {
+  // API routes will be handled above. Any other route should serve the frontend application
+  if (!req.path.startsWith('/api/')) {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  } else {
+    res.status(404).json({ message: '找不到請求的API資源' });
+  }
 });
 
 module.exports = app; 

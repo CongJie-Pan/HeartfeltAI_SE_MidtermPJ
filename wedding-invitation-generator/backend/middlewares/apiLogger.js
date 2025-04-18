@@ -1,15 +1,11 @@
 /**
- * API Logger Middleware
+ * API Request Logging Middleware
  * 
  * This middleware logs detailed information about each API request and response.
- * It tracks request timing, response status codes, and other metadata.
- * In production, it also persists this information to the database for analytics.
- * 
- * Key features:
- * - Logs request method, URL, IP, and user agent
- * - Measures and records response time for performance monitoring
- * - Logs response status code to track errors
- * - In production, writes log entries to the database
+ * It captures HTTP method, URL, IP address, response status, response time,
+ * and other relevant request metadata for monitoring and debugging purposes.
+ * In production, it also logs important requests to the database via the
+ * configured Winston logger.
  */
 const { PrismaClient } = require('@prisma/client');
 const logger = require('../config/logger');
@@ -29,59 +25,72 @@ const getPrisma = () => {
 };
 
 /**
- * API Logger Middleware Function
- * 
- * Intercepts requests and responses to log API activity.
- * Uses function wrapping to capture response data after completion.
+ * API Logger middleware function
+ * Captures and logs information about incoming requests and outgoing responses
  * 
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  * @param {Function} next - Express next middleware function
+ * @returns {void}
  */
-const apiLogger = async (req, res, next) => {
+const apiLogger = (req, res, next) => {
+  // Skip logging for non-API routes or static assets to reduce noise
+  if (!req.originalUrl.startsWith('/api')) {
+    return next();
+  }
+
+  // Capture start time to calculate request duration
   const start = Date.now();
   
-  // Save the original res.end method for later restoration
-  const originalEnd = res.end;
-  
-  // Override res.end to capture response metadata before completion
-  res.end = function(chunk, encoding) {
-    // Call the original method to ensure normal response flow
-    originalEnd.call(this, chunk, encoding);
-    
-    const responseTime = Date.now() - start;
-    const { method, originalUrl, ip, headers } = req;
-    const userAgent = headers['user-agent'] || '';
-    const statusCode = res.statusCode;
-    
-    // Log to Winston logger system
-    logger.info(`${method} ${originalUrl} ${statusCode} ${responseTime}ms`, {
-      method,
-      url: originalUrl,
-      statusCode,
-      responseTime,
-      ip,
-      userAgent
-    });
-    
-    // Only log to database in production environment
-    if (process.env.NODE_ENV === 'production') {
-      // Write to database log (async operation, doesn't block response)
-      getPrisma().apiAccessLog.create({
-        data: {
-          endpoint: originalUrl,
-          method,
-          statusCode,
-          responseTime,
-          userIp: ip,
-          userAgent
-        }
-      }).catch(err => {
-        logger.error('Failed to log API access to database', { error: err.message });
-      });
-    }
+  // Extract relevant request data for logging
+  const requestData = {
+    method: req.method,
+    url: req.originalUrl,
+    ip: req.ip || req.connection.remoteAddress,
+    userAgent: req.headers['user-agent'],
+    referrer: req.headers.referer || req.headers.referrer || '',
+    // Include user ID if authenticated, useful for audit trails
+    userId: req.user ? req.user.id : 'unauthenticated'
   };
   
+  // Log request details at debug level (only shown in development)
+  logger.debug(`API Request: ${req.method} ${req.originalUrl}`, {
+    metadata: requestData
+  });
+
+  // Use response finish event to log after response is sent
+  res.on('finish', () => {
+    // Calculate request duration in milliseconds
+    const duration = Date.now() - start;
+    const statusCode = res.statusCode;
+    
+    // Construct the response data for logging
+    const responseData = {
+      ...requestData,
+      statusCode,
+      duration: `${duration}ms`
+    };
+    
+    // Determine log level based on status code
+    // 4xx/5xx are errors or warnings, successful responses are info/debug
+    let logLevel = 'info';
+    
+    if (statusCode >= 500) {
+      logLevel = 'error';
+    } else if (statusCode >= 400) {
+      logLevel = 'warn';
+    } else if (process.env.NODE_ENV !== 'production') {
+      // In non-production, downgrade successful responses to debug to reduce clutter
+      logLevel = 'debug';
+    }
+
+    // Log with appropriate level and details
+    logger[logLevel](
+      `API Response: ${req.method} ${req.originalUrl} - ${statusCode} - ${duration}ms`,
+      { metadata: responseData }
+    );
+  });
+
   next();
 };
 
