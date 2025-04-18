@@ -1,10 +1,25 @@
+/**
+ * Security Configuration Module
+ * 
+ * This module implements various security measures for the API:
+ * - Helmet for secure HTTP headers
+ * - Rate limiting to prevent abuse
+ * - Request throttling to minimize DoS impacts
+ * - CORS configuration to control cross-origin requests
+ */
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const slowDown = require('express-slow-down');
 const cors = require('cors');
 const logger = require('./logger');
 
-// CORS配置
+/**
+ * CORS Configuration
+ * Restricts which domains can access the API
+ * - In production: Only allows the specified frontend URL
+ * - In development: Allows localhost development servers
+ * Controls allowed methods, headers, and enables credentials
+ */
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
     ? process.env.FRONTEND_URL 
@@ -12,18 +27,24 @@ const corsOptions = {
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-  maxAge: 86400 // 24小時
+  maxAge: 86400 // 24 hours - how long browsers should cache CORS responses
 };
 
-// 速率限制器
+/**
+ * API Rate Limiter
+ * Prevents abuse by limiting how many requests an IP can make
+ * - Tracks requests within a 15-minute window
+ * - Limits each IP to 100 requests in that window
+ * - Logs attempts that exceed the rate limit for security monitoring
+ */
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15分鐘
-  max: 100, // 每個IP限制請求數
+  windowMs: 15 * 60 * 1000, // 15 minutes window
+  max: 100, // Limit each IP to 100 requests per window
   standardHeaders: true,
   legacyHeaders: false,
-  // 速率限制被觸發時的處理
+  // Custom handler for rate limit violations
   handler: (req, res, next, options) => {
-    // 記錄到日誌
+    // Log rate limit violations for security monitoring
     logger.warn(`Rate limit exceeded for IP: ${req.ip}`, {
       ip: req.ip,
       method: req.method,
@@ -33,24 +54,34 @@ const apiLimiter = rateLimit({
     
     res.status(options.statusCode).json({
       message: options.message,
-      retryAfter: Math.ceil(options.windowMs / 1000 / 60) // 分鐘
+      retryAfter: Math.ceil(options.windowMs / 1000 / 60) // minutes
     });
   }
 });
 
-// 請求減速器 (對於密集操作如生成邀請函)
+/**
+ * Request Speed Limiter
+ * Gradually slows down responses based on request frequency
+ * - Tracks requests within a 5-minute window
+ * - After 10 requests, starts adding progressive delays
+ * - Helps prevent DoS attacks while still allowing legitimate heavy usage
+ */
 const speedLimiter = slowDown({
-  windowMs: 5 * 60 * 1000, // 5分鐘
-  delayAfter: 10, // 10個請求後開始延遲
-  delayMs: (hits) => hits * 100, // 每多一個請求，增加100ms延遲
+  windowMs: 5 * 60 * 1000, // 5 minutes tracking window
+  delayAfter: 10, // Start delaying after 10 requests
+  delayMs: (hits) => hits * 100, // Add 100ms delay per hit above threshold
 });
 
-// 記錄減速器觸發的中間件
+/**
+ * Speed Limiter Logging Middleware
+ * Monitors and logs when speed limiting is applied
+ * Important for security monitoring and diagnosing potential abuse
+ */
 const logSpeedLimiter = (req, res, next) => {
   const originalEnd = res.end;
   
   res.end = function(...args) {
-    // 檢查是否添加了延遲
+    // Check if delay was applied
     if (req.slowDown && req.slowDown.delay) {
       logger.info(`Speed limit applied for IP: ${req.ip}`, {
         ip: req.ip,
@@ -66,32 +97,35 @@ const logSpeedLimiter = (req, res, next) => {
   next();
 };
 
-// 配置安全中間件
+/**
+ * Main security configuration function
+ * Applies all security measures to the Express app
+ */
 const configSecurity = (app) => {
-  // 啟用各種安全頭部
+  // Enable Helmet for secure HTTP headers
   app.use(helmet());
   
-  // 配置CORS
+  // Configure CORS protection
   app.use(cors(corsOptions));
   
-  // 全局API速率限制
+  // Apply global API rate limiting
   app.use('/api/', apiLimiter);
   
-  // 對特定重資源路由應用更嚴格的限制
+  // Apply stricter rate limiting to resource-intensive routes
   app.use('/api/invitations/generate', rateLimit({
-    windowMs: 60 * 60 * 1000, // 1小時
-    max: 20, // 每小時最多20個請求
+    windowMs: 60 * 60 * 1000, // 1 hour window
+    max: 20, // Limit to 20 requests per hour
     message: '請求生成邀請函次數過多，請稍後再試'
   }));
   
-  // 延遲敏感API響應以防暴力攻擊
+  // Apply speed limiting to invitation endpoints
   app.use('/api/invitations', logSpeedLimiter);
   app.use('/api/invitations', speedLimiter);
   
-  // 禁用顯示Express信息的頭部
+  // Disable X-Powered-By header to avoid exposing Express
   app.disable('x-powered-by');
   
-  // 記錄安全配置已應用
+  // Log that security configuration has been applied
   logger.info('Security configuration applied');
 };
 

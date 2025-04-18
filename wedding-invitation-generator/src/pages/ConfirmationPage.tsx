@@ -1,3 +1,19 @@
+/**
+ * Confirmation Page
+ * 
+ * This page allows users to review, edit, and send all generated invitations
+ * in the final step before completion. It provides both bulk and individual
+ * invitation management capabilities, with real-time status updates.
+ * 
+ * Key features:
+ * - Table view of all guests and their invitation status
+ * - Preview and edit functionality for individual invitations
+ * - Individual and batch sending capabilities
+ * - Real-time progress updates during sending process
+ * - Error handling and user feedback
+ * 
+ * This component uses Framer Motion for animations and modal transitions.
+ */
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProgressIndicator from '../components/ProgressIndicator';
@@ -5,27 +21,41 @@ import { useWedding } from '../context/WeddingContext';
 import { GuestInfo } from '../types';
 import api from '../services/api';
 
-// 最終確認頁面組件
-// 提供最終的邀請函確認，展示將要發送的內容，並允許刪除或編輯
+/**
+ * ConfirmationPage Component
+ * 
+ * The final review page before sending invitations. Provides a comprehensive
+ * interface for managing and sending all invitations.
+ * 
+ * @returns {JSX.Element} The confirmation page component
+ */
 const ConfirmationPage: React.FC = () => {
   const { state, dispatch, nextStep, prevStep } = useWedding();
-  const [selectedGuest, setSelectedGuest] = useState<GuestInfo | null>(null);
-  const [editContent, setEditContent] = useState('');
-  const [editMode, setEditMode] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [sentCount, setSentCount] = useState(0);
-  const [error, setError] = useState<string | null>(null);
   
-  // 處理刪除賓客
+  // Local state for UI management
+  const [selectedGuest, setSelectedGuest] = useState<GuestInfo | null>(null);  // Currently selected guest for preview/edit
+  const [editContent, setEditContent] = useState('');                          // Editable invitation content
+  const [editMode, setEditMode] = useState(false);                             // Whether edit mode is active
+  const [isSending, setIsSending] = useState(false);                           // Loading state for sending process
+  const [sentCount, setSentCount] = useState(0);                               // Counter for sent invitations
+  const [error, setError] = useState<string | null>(null);                     // Error message if any
+
+  /**
+   * Delete a guest and their invitation
+   * Confirms with the user before proceeding with deletion
+   * 
+   * @param {string} id - ID of the guest to delete
+   */
   const handleDeleteGuest = async (id: string) => {
     if (window.confirm('確定要刪除此賓客的邀請函？')) {
       try {
-        // 呼叫 API 刪除賓客
+        // Call API to delete the guest
         await api.guests.delete(id);
         
-        // 更新 Redux 狀態
+        // Update application state to remove the guest
         dispatch({ type: 'REMOVE_GUEST', payload: id });
         
+        // Close modal if currently viewing the deleted guest
         if (selectedGuest && selectedGuest.id === id) {
           setSelectedGuest(null);
         }
@@ -36,19 +66,30 @@ const ConfirmationPage: React.FC = () => {
     }
   };
   
-  // 預覽邀請函
+  /**
+   * Display invitation preview for a specific guest
+   * Opens the modal with the selected guest's invitation
+   * 
+   * @param {GuestInfo} guest - Guest object to preview
+   */
   const handlePreview = (guest: GuestInfo) => {
     setSelectedGuest(guest);
     setEditMode(false);
   };
   
-  // 關閉模態框
+  /**
+   * Close the preview/edit modal
+   * Resets the modal state
+   */
   const closeModal = () => {
     setSelectedGuest(null);
     setEditMode(false);
   };
   
-  // 處理編輯模式切換
+  /**
+   * Switch to edit mode for the current invitation
+   * Initializes the edit form with the current invitation content
+   */
   const handleEditMode = () => {
     if (selectedGuest && selectedGuest.invitationContent) {
       setEditContent(selectedGuest.invitationContent);
@@ -56,16 +97,19 @@ const ConfirmationPage: React.FC = () => {
     }
   };
   
-  // 處理保存編輯
+  /**
+   * Save edited invitation content
+   * Updates the invitation content both in the API and local state
+   */
   const handleSaveEdit = async () => {
     if (selectedGuest && editContent.trim()) {
       try {
         setError(null);
         
-        // 使用 API 更新邀請函文字
+        // Call API to update the invitation content
         await api.invitations.update(selectedGuest.id, editContent);
         
-        // 更新 Redux 狀態
+        // Update application state with new content
         dispatch({
           type: 'UPDATE_INVITATION',
           payload: {
@@ -75,6 +119,7 @@ const ConfirmationPage: React.FC = () => {
           }
         });
         
+        // Exit edit mode after saving
         setEditMode(false);
       } catch (error) {
         console.error('更新邀請函文字時出錯:', error);
@@ -83,12 +128,19 @@ const ConfirmationPage: React.FC = () => {
     }
   };
   
-  // 處理取消編輯
+  /**
+   * Cancel edit mode without saving changes
+   * Returns to preview mode
+   */
   const handleCancelEdit = () => {
     setEditMode(false);
   };
   
-  // 處理發送所有邀請函
+  /**
+   * Send all invitations in batch
+   * Confirms with the user before starting the sending process
+   * Updates progress in real-time
+   */
   const handleSendAll = async () => {
     if (window.confirm(`確定要發送${state.guests.length}份邀請函嗎？`)) {
       try {
@@ -96,15 +148,16 @@ const ConfirmationPage: React.FC = () => {
         setError(null);
         setSentCount(0);
         
-        // 調用 API 發送所有邀請函
+        // Call API to send all invitations
         await api.emails.sendAll();
         
-        // 實際應用中可能需要等待後端通知發送進度
-        // 這裡簡化為直接更新狀態
+        // Update the status of each guest in sequence
+        // In a real implementation, this might be handled by websockets
+        // or polling to get updates from the server
         for (let i = 0; i < state.guests.length; i++) {
           const guest = state.guests[i];
           
-          // 更新當前賓客的狀態
+          // Update the current guest's status to 'sent'
           dispatch({
             type: 'UPDATE_INVITATION',
             payload: {
@@ -114,12 +167,14 @@ const ConfirmationPage: React.FC = () => {
             }
           });
           
+          // Increment the sent counter
           setSentCount(i + 1);
-          // 添加一點延遲以模擬發送過程
+          
+          // Add a slight delay between updates for visual feedback
           await new Promise(resolve => setTimeout(resolve, 300));
         }
         
-        // 所有邀請函發送完畢，進入完成頁面
+        // Move to the complete page after all invitations are sent
         nextStep();
       } catch (error) {
         console.error('發送邀請函時出錯:', error);
@@ -130,7 +185,12 @@ const ConfirmationPage: React.FC = () => {
     }
   };
   
-  // 處理單個邀請函發送
+  /**
+   * Send invitation to a single guest
+   * Updates the guest's status after successful sending
+   * 
+   * @param {string} guestId - ID of the guest to send invitation to
+   */
   const handleSendOne = async (guestId: string) => {
     try {
       const guest = state.guests.find(g => g.id === guestId);
@@ -138,10 +198,10 @@ const ConfirmationPage: React.FC = () => {
       
       setError(null);
       
-      // 調用 API 發送單個邀請函
+      // Call API to send individual invitation
       await api.emails.send(guestId);
       
-      // 更新賓客狀態
+      // Update the guest's status to 'sent'
       dispatch({
         type: 'UPDATE_INVITATION',
         payload: {
@@ -151,6 +211,7 @@ const ConfirmationPage: React.FC = () => {
         }
       });
       
+      // Show success message
       alert(`已成功發送給 ${guest.name} 的邀請函！`);
     } catch (error) {
       console.error('發送邀請函時出錯:', error);
@@ -158,10 +219,16 @@ const ConfirmationPage: React.FC = () => {
     }
   };
   
-  // 檢查是否可以發送
+  // Determine if the "Send All" button should be enabled
+  // All guests must have generated invitation content
   const canSend = state.guests.length > 0 && state.guests.every(guest => guest.invitationContent);
   
-  // 動畫配置
+  /**
+   * Animation configurations using Framer Motion
+   * These define how elements will animate when they appear on screen
+   */
+  
+  // Main container animation
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { 
@@ -174,7 +241,7 @@ const ConfirmationPage: React.FC = () => {
     }
   };
   
-  // 表格行動畫
+  // Table row animation
   const rowVariants = {
     hidden: { opacity: 0, x: -20 },
     visible: { 
@@ -184,7 +251,7 @@ const ConfirmationPage: React.FC = () => {
     }
   };
   
-  // 模態框動畫
+  // Modal animation
   const modalVariants = {
     hidden: { y: 50, opacity: 0 },
     visible: { 
@@ -209,17 +276,17 @@ const ConfirmationPage: React.FC = () => {
     >
       <h1 className="text-3xl font-serif text-center font-bold mb-8 text-wedding-dark">最終確認與發送</h1>
       
-      {/* 進度指示器 */}
+      {/* Progress indicator to show current step */}
       <ProgressIndicator />
       
-      {/* 錯誤訊息 */}
+      {/* Error message display */}
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
         </div>
       )}
       
-      {/* 賓客邀請函列表 */}
+      {/* Guest invitation list */}
       <div className="mt-8">
         <h2 className="text-xl font-medium mb-4 text-wedding-dark">所有邀請函</h2>
         <p className="text-sm text-gray-500 mb-6">請確認所有邀請函內容正確無誤，再進行發送</p>
@@ -249,6 +316,7 @@ const ConfirmationPage: React.FC = () => {
                     <td className="px-4 py-3 text-sm">{guest.relationship}</td>
                     <td className="px-4 py-3 text-sm">{guest.email}</td>
                     <td className="px-4 py-3 text-sm">
+                      {/* Status badge with conditional styling */}
                       <span className={`px-2 py-1 rounded-full text-xs
                         ${guest.status === 'edited' ? 'bg-blue-100 text-blue-800' : 
                          guest.status === 'generated' ? 'bg-green-100 text-green-800' : 
@@ -291,7 +359,7 @@ const ConfirmationPage: React.FC = () => {
         </div>
       </div>
       
-      {/* 導航和發送按鈕 */}
+      {/* Navigation and send buttons */}
       <div className="flex justify-between mt-12">
         <button
           onClick={prevStep}
@@ -308,6 +376,7 @@ const ConfirmationPage: React.FC = () => {
         >
           {isSending ? (
             <>
+              {/* Loading spinner during sending process */}
               <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -320,10 +389,11 @@ const ConfirmationPage: React.FC = () => {
         </button>
       </div>
       
-      {/* 邀請函預覽模態框 */}
+      {/* Invitation preview/edit modal */}
       <AnimatePresence>
         {selectedGuest && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            {/* Backdrop that closes modal when clicked */}
             <div className="absolute inset-0" onClick={closeModal}></div>
             
             <motion.div
@@ -332,7 +402,7 @@ const ConfirmationPage: React.FC = () => {
               initial="hidden"
               animate="visible"
               exit="exit"
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()} // Prevent clicks from bubbling to backdrop
             >
               <div className="p-6">
                 <div className="border-b pb-3 mb-4">
@@ -342,6 +412,7 @@ const ConfirmationPage: React.FC = () => {
                   </p>
                 </div>
                 
+                {/* Email content preview/edit area */}
                 <div className="border rounded-lg p-4 mb-4">
                   <div className="border-b pb-2 mb-3">
                     <div className="font-medium">主旨：{state.coupleInfo.groomName} & {state.coupleInfo.brideName} 的婚禮邀請函</div>
@@ -351,20 +422,24 @@ const ConfirmationPage: React.FC = () => {
                   </div>
                   
                   {editMode ? (
+                    // Editable textarea when in edit mode
                     <textarea
                       className="w-full h-64 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-wedding-accent focus:border-transparent resize-none"
                       value={editContent}
                       onChange={(e) => setEditContent(e.target.value)}
                     />
                   ) : (
+                    // Read-only view when in preview mode
                     <div className="text-sm whitespace-pre-line">
                       {selectedGuest.invitationContent}
                     </div>
                   )}
                 </div>
                 
+                {/* Action buttons that change based on current mode */}
                 <div className="flex justify-end space-x-3">
                   {editMode ? (
+                    // Edit mode buttons
                     <>
                       <button
                         onClick={handleCancelEdit}
@@ -380,6 +455,7 @@ const ConfirmationPage: React.FC = () => {
                       </button>
                     </>
                   ) : (
+                    // Preview mode buttons
                     <>
                       <button
                         onClick={closeModal}

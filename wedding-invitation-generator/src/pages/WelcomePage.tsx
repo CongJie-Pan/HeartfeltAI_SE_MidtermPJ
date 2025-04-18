@@ -1,46 +1,74 @@
+/**
+ * Welcome Page Component
+ * 
+ * This is the first page users see when accessing the application.
+ * It provides a brief introduction to the wedding invitation generator
+ * and a button to start the process.
+ * 
+ * Features:
+ * - Animated entrance using Framer Motion
+ * - Decorative falling petals background
+ * - Clear call-to-action to begin the workflow
+ */
 import React from 'react';
 import { motion } from 'framer-motion';
 import FallingPetals from '../components/FallingPetals';
 import { useWedding } from '../context/WeddingContext';
 
-// 歡迎頁面組件
-// 該頁面是用戶第一次進入系統看到的頁面，提供系統簡介和開始按鈕
+/**
+ * WelcomePage Component
+ * 
+ * Landing page that introduces the application's purpose
+ * and provides the entry point to the invitation creation workflow.
+ * 
+ * @returns {JSX.Element} The welcome page component
+ */
 const WelcomePage: React.FC = () => {
+  // Get the navigation function from wedding context
   const { nextStep } = useWedding();
   
-  // 動畫配置
+  /**
+   * Animation configuration using Framer Motion
+   * 
+   * Framer Motion is a popular React animation library that simplifies
+   * creating smooth, interactive animations with a declarative API.
+   */
+  
+  // Parent container animation with staggered children
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { 
       opacity: 1,
       transition: { 
         duration: 0.8,
-        staggerChildren: 0.3
+        staggerChildren: 0.3  // Delay between each child element's animation
       }
     }
   };
   
+  // Individual element animations (titles, text, buttons)
   const itemVariants = {
-    hidden: { y: 20, opacity: 0 },
+    hidden: { y: 20, opacity: 0 },  // Start 20px below final position and invisible
     visible: { 
-      y: 0, 
-      opacity: 1,
-      transition: { duration: 0.5 }
+      y: 0,                         // Move to final position
+      opacity: 1,                    
+      transition: { duration: 0.5 }  // Animation takes 0.5 seconds
     }
   };
   
   return (
     <div className="min-h-screen flex flex-col items-center justify-center text-center px-4 relative overflow-hidden">
-      {/* 花瓣飄落背景 */}
+      {/* Decorative falling petals background animation */}
       <FallingPetals />
       
+      {/* Content container with staggered entrance animation */}
       <motion.div
         className="max-w-3xl z-10"
         variants={containerVariants}
         initial="hidden"
         animate="visible"
       >
-        {/* 標題 */}
+        {/* Main title with animation */}
         <motion.h1 
           className="text-4xl md:text-6xl font-serif font-bold mb-4 text-wedding-dark"
           variants={itemVariants}
@@ -48,7 +76,7 @@ const WelcomePage: React.FC = () => {
           夢幻婚禮邀請函生成系統
         </motion.h1>
         
-        {/* 副標題 */}
+        {/* Subtitle with animation */}
         <motion.h2 
           className="text-xl md:text-2xl font-light mb-8 text-wedding-dark"
           variants={itemVariants}
@@ -56,7 +84,7 @@ const WelcomePage: React.FC = () => {
           透過AI為您的賓客打造專屬邀請函
         </motion.h2>
         
-        {/* 簡介文字 */}
+        {/* Introduction text with animation */}
         <motion.p 
           className="text-lg mb-12 max-w-2xl mx-auto text-wedding-text"
           variants={itemVariants}
@@ -66,13 +94,13 @@ const WelcomePage: React.FC = () => {
           讓您的婚禮邀請更加個性化和難忘。
         </motion.p>
         
-        {/* 開始按鈕 */}
+        {/* Call-to-action button with animation and interactive effects */}
         <motion.button
           className="btn-primary text-lg px-12 py-4 rounded-full transform transition-transform hover:scale-105 hover:-translate-y-1"
           onClick={nextStep}
           variants={itemVariants}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+          whileHover={{ scale: 1.05 }}  // Scale up slightly on hover
+          whileTap={{ scale: 0.95 }}    // Scale down slightly when clicked
         >
           開始使用
         </motion.button>

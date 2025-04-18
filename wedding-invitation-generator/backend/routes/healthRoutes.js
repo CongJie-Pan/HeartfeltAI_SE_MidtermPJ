@@ -1,28 +1,72 @@
+/**
+ * Health and Status Check Routes
+ * 
+ * This module defines API endpoints for monitoring system health and status.
+ * These endpoints are used for:
+ * - Uptime monitoring
+ * - Health check by load balancers
+ * - System diagnostics
+ * - Environment verification
+ * 
+ * These routes are intentionally not authenticated to allow for external monitoring.
+ * All routes are prefixed with '/api' from the main application.
+ */
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const logger = require('../config/logger');
 
+// Create Express router
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// 基本健康檢查
+/**
+ * Basic Health Check
+ * 
+ * GET /api/health
+ * 
+ * Provides a simple health check endpoint that returns basic status information.
+ * This endpoint is designed to be lightweight and fast for frequent polling.
+ * 
+ * Used by:
+ * - Load balancers to determine if instance is healthy
+ * - Monitoring systems to track uptime
+ * - Kubernetes/Docker health checks
+ * 
+ * Returns a simple 200 response with timestamp if the server is running.
+ */
 router.get('/health', async (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
 
-// 詳細健康檢查
+/**
+ * Detailed Health Check
+ * 
+ * GET /api/health/detailed
+ * 
+ * Provides detailed system health information including:
+ * - Database connectivity
+ * - Logging system status
+ * - Memory usage statistics
+ * - System uptime
+ * 
+ * This endpoint performs actual checks against dependencies like the database,
+ * making it more thorough but also more resource-intensive than the basic check.
+ * 
+ * Returns detailed system information when all checks pass,
+ * or a 500 error if any component fails its health check.
+ */
 router.get('/health/detailed', async (req, res) => {
   try {
-    // 檢查數據庫連接
+    // Database connection check
     await prisma.$queryRaw`SELECT 1`;
     
-    // 檢查日誌系統
+    // Logging system check
     logger.info('Health check executed');
     
-    // 檢查內存使用情況
+    // Memory usage statistics
     const memoryUsage = process.memoryUsage();
     
-    // 檢查進程正常運行時間
+    // Process uptime check
     const uptime = process.uptime();
     
     res.status(200).json({

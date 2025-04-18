@@ -1,15 +1,26 @@
+/**
+ * Logger Configuration Module
+ * 
+ * This module configures a comprehensive logging system using Winston.
+ * It handles logging to console, files, and database (in production).
+ * The logger provides different log levels and formats for various environments.
+ */
 const { createLogger, format, transports, Transport } = require('winston');
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
 const path = require('path');
 
-// 確保日誌目錄存在
+// Ensure logs directory exists
 const logDir = path.join(__dirname, '../logs');
 if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
 }
 
-// 延遲初始化Prisma，確保在首次使用時才創建實例
+/**
+ * Lazy initialization pattern for Prisma client
+ * Only creates the Prisma instance when it's first needed
+ * This helps optimize resources and prevent connection issues on startup
+ */
 let _prisma = null;
 const getPrisma = () => {
   if (!_prisma) {
@@ -18,7 +29,12 @@ const getPrisma = () => {
   return _prisma;
 };
 
-// 自定義Winston格式
+/**
+ * Custom Winston format configuration
+ * - Adds timestamps to all logs
+ * - Includes error stacks when available
+ * - Formats data using JSON for structured logging
+ */
 const customFormat = format.combine(
   format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   format.errors({ stack: true }),
@@ -26,7 +42,12 @@ const customFormat = format.combine(
   format.json()
 );
 
-// 創建數據庫傳輸器
+/**
+ * Custom Winston Transport for Database Logging
+ * Extends the base Transport class to provide logging to database
+ * Only logs important events (error, warn, info) to the database
+ * Only active in production environment to avoid unnecessary database writes
+ */
 class PrismaTransport extends Transport {
   constructor(opts) {
     super(opts);
@@ -40,9 +61,9 @@ class PrismaTransport extends Transport {
     });
 
     try {
-      // 僅存儲重要日誌到數據庫
+      // Only store important logs to database
       if (['error', 'warn', 'info'].includes(info.level)) {
-        // 只有在生產環境中才寫入數據庫
+        // Only write to database in production
         if (process.env.NODE_ENV === 'production') {
           const prisma = getPrisma();
           await prisma.systemLog.create({
@@ -62,13 +83,20 @@ class PrismaTransport extends Transport {
   }
 }
 
-// 創建Winston日誌記錄器
+/**
+ * Main Winston logger configuration
+ * Sets up multiple transports for comprehensive logging:
+ * - Console for development visibility
+ * - Error log file for critical issues
+ * - Combined log file for all log levels
+ * - Database logging in production for important events
+ */
 const logger = createLogger({
   level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
   format: customFormat,
   defaultMeta: { service: 'wedding-invitation-api' },
   transports: [
-    // 寫入所有日誌到控制台
+    // Console logging with colorized output for better readability
     new transports.Console({
       format: format.combine(
         format.colorize(),
@@ -76,29 +104,34 @@ const logger = createLogger({
       )
     }),
     
-    // 寫入所有日誌到文件
+    // Error log file - captures only error level logs
     new transports.File({ 
       filename: path.join(logDir, 'error.log'), 
       level: 'error' 
     }),
+    // Combined log file - captures all log levels
     new transports.File({ 
       filename: path.join(logDir, 'combined.log') 
     }),
     
-    // 寫入重要日誌到數據庫（僅限生產環境）
+    // Database logging - only in production and only for important logs
     ...(process.env.NODE_ENV === 'production' ? [new PrismaTransport({ level: 'info' })] : [])
   ],
-  // 異常處理
+  // Exception handling
   exceptionHandlers: [
     new transports.File({ 
       filename: path.join(logDir, 'exceptions.log') 
     })
   ],
-  // 不退出進程
+  // Prevents process exit on uncaught exceptions
   exitOnError: false
 });
 
-// 生產環境禁用控制台日誌輸出
+/**
+ * Production environment logging optimization
+ * Limits console output to only errors in production
+ * This reduces unnecessary console output in production servers
+ */
 if (process.env.NODE_ENV === 'production') {
   logger.transports.forEach((t) => {
     if (t.name === 'console') {

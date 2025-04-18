@@ -1,15 +1,34 @@
+/**
+ * Invitation Controller Module
+ * 
+ * Handles the generation and management of wedding invitations:
+ * - Generating personalized invitations using AI
+ * - Updating invitation content
+ * - Caching invitation data to improve performance
+ * 
+ * Uses the DeepSeek AI API for natural language generation and
+ * implements caching, error handling, and retry mechanisms.
+ */
 const { PrismaClient } = require('@prisma/client');
 const logger = require('../config/logger');
 const NodeCache = require('node-cache');
 const dotenv = require('dotenv');
 
-// 確保環境變數載入
+// Ensure environment variables are loaded
 dotenv.config();
 
-// 邀請函快取 (1小時過期)
+/**
+ * Invitation cache with 1-hour expiration
+ * Used to store generated invitations to reduce API calls
+ * and improve response times for frequently accessed invitations
+ */
 const invitationCache = new NodeCache({ stdTTL: 3600 });
 
-// 設置 DeepSeek API 客戶端 (如果整合 OpenAI SDK)
+/**
+ * Initialize DeepSeek API client (via OpenAI SDK)
+ * The system uses DeepSeek's API for generating natural-sounding invitations,
+ * but falls back to mock data if the API is not configured
+ */
 let openai;
 try {
   const OpenAI = require('openai');
@@ -23,7 +42,15 @@ try {
 
 const prisma = new PrismaClient();
 
-// 創建提示詞生成函數
+/**
+ * Create Invitation Prompt
+ * 
+ * Constructs the AI prompt for generating a personalized invitation
+ * Includes relevant data about the couple, wedding, and guest relationship
+ * 
+ * @param {Object} guest - Guest object with related couple information
+ * @returns {string} Formatted prompt for the AI model
+ */
 const createInvitationPrompt = (guest) => {
   const { coupleInfo } = guest;
   
@@ -62,7 +89,16 @@ ${guest.memories ? `- 共同回憶: ${guest.memories}` : ''}
   `;
 };
 
-// 重試機制
+/**
+ * Exponential Backoff Retry Mechanism
+ * 
+ * Implements an exponential backoff strategy for API calls
+ * to handle transient failures and rate limits
+ * 
+ * @param {Function} fn - Async function to retry
+ * @param {number} maxRetries - Maximum number of retry attempts
+ * @returns {Promise} Result of the function or throws error after max retries
+ */
 const exponentialBackoff = async (fn, maxRetries = 3) => {
   let retries = 0;
   while (retries < maxRetries) {
@@ -72,20 +108,31 @@ const exponentialBackoff = async (fn, maxRetries = 3) => {
       retries++;
       if (retries >= maxRetries) throw error;
       
-      const delay = Math.pow(2, retries) * 1000; // 指數增長延遲
+      const delay = Math.pow(2, retries) * 1000; // Exponential delay (1s, 2s, 4s...)
       logger.info(`Retry ${retries}/${maxRetries} after ${delay}ms`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
 };
 
-// 為賓客生成邀請函
+/**
+ * Generate Invitation
+ * 
+ * Creates a personalized invitation for a specific guest using AI.
+ * Implements caching to improve performance and reduce API costs.
+ * Falls back to mock data if the AI API is not configured.
+ * 
+ * @route POST /api/invitations/generate
+ * @param {string} req.body.guestId - ID of the guest to generate invitation for
+ * @param {boolean} [req.query.force=false] - Force regeneration, ignoring cache
+ * @returns {Object} Generated invitation content and guest information
+ */
 exports.generateInvitation = async (req, res) => {
   try {
     const { guestId } = req.body;
     const { force } = req.query;
     
-    // 檢查快取
+    // Check cache first for performance optimization
     const cacheKey = `invitation_${guestId}`;
     const cachedInvitation = invitationCache.get(cacheKey);
     
@@ -98,7 +145,7 @@ exports.generateInvitation = async (req, res) => {
       });
     }
     
-    // 獲取賓客和新人資料
+    // Retrieve guest and couple information
     const guest = await prisma.guest.findUnique({
       where: { id: guestId },
       include: { coupleInfo: true }
@@ -114,17 +161,17 @@ exports.generateInvitation = async (req, res) => {
       guestName: guest.name 
     });
     
-    // 構建提示詞
+    // Build AI prompt
     const prompt = createInvitationPrompt(guest);
     
-    // 記錄請求開始時間（用於性能監控）
+    // Record request start time (for performance monitoring)
     const startTime = Date.now();
     
     let invitationContent;
     
-    // 檢查API客戶端是否可用
+    // Check if API client is available
     if (!openai || !process.env.DEEPSEEK_API_KEY) {
-      // 沒有API或密鑰，返回模擬內容
+      // No API or key configured, return mock content
       invitationContent = `尊敬的${guest.name}：
 
 值此人生重要時刻，${guest.coupleInfo.groomName}與${guest.coupleInfo.brideName}誠摯邀請您參加我們的婚禮。
@@ -139,7 +186,7 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
 
       logger.warn('Using mock invitation due to missing DeepSeek API configuration', { guestId });
     } else {
-      // 呼叫DeepSeek API生成邀請函
+      // Call DeepSeek API to generate invitation
       try {
         const completionFn = async () => {
           const completion = await openai.chat.completions.create({
@@ -156,7 +203,7 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
           return completion.choices[0].message.content;
         };
         
-        // 使用重試機制呼叫API
+        // Use retry mechanism for API calls
         invitationContent = await exponentialBackoff(completionFn);
       } catch (error) {
         logger.error('DeepSeek API error', { 
@@ -171,10 +218,10 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
       }
     }
     
-    // 記錄AI請求完成時間
+    // Record AI request completion time
     const aiResponseTime = Date.now() - startTime;
     
-    // 更新賓客資料庫
+    // Update guest database record
     const updatedGuest = await prisma.guest.update({
       where: { id: guestId },
       data: {
@@ -183,7 +230,7 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
       }
     });
     
-    // 儲存到快取
+    // Store in cache
     invitationCache.set(cacheKey, invitationContent);
     
     logger.info('Invitation generated successfully', { 
@@ -211,13 +258,23 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
   }
 };
 
-// 修改邀請函內容
+/**
+ * Update Invitation Content
+ * 
+ * Allows manual editing of a generated invitation.
+ * Updates both the database and cache.
+ * 
+ * @route PUT /api/invitations/:guestId
+ * @param {string} req.params.guestId - ID of the guest whose invitation to update
+ * @param {string} req.body.invitationContent - New invitation content
+ * @returns {Object} Success message and updated guest information
+ */
 exports.updateInvitation = async (req, res) => {
   try {
     const { guestId } = req.params;
     const { invitationContent } = req.body;
     
-    // 驗證賓客是否存在
+    // Verify guest exists
     const guest = await prisma.guest.findUnique({
       where: { id: guestId }
     });
@@ -227,7 +284,7 @@ exports.updateInvitation = async (req, res) => {
       return res.status(404).json({ message: '找不到此賓客' });
     }
     
-    // 更新邀請函
+    // Update invitation
     const updatedGuest = await prisma.guest.update({
       where: { id: guestId },
       data: {
@@ -236,7 +293,7 @@ exports.updateInvitation = async (req, res) => {
       }
     });
     
-    // 更新快取
+    // Update cache
     const cacheKey = `invitation_${guestId}`;
     invitationCache.set(cacheKey, invitationContent);
     

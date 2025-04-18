@@ -1,22 +1,40 @@
+/**
+ * Email Controller Module
+ * 
+ * Handles sending wedding invitations via email:
+ * - Setting up email transport
+ * - Creating HTML email templates
+ * - Sending bulk invitations to all guests
+ * - Sending individual invitations
+ * - Implementing test mode functionality
+ * 
+ * Uses Nodemailer for email delivery and implements
+ * proper error handling and logging.
+ */
 const { PrismaClient } = require('@prisma/client');
 const nodemailer = require('nodemailer');
 const logger = require('../config/logger');
 const dotenv = require('dotenv');
 
-// 確保環境變數載入
+// Ensure environment variables are loaded
 dotenv.config();
 
 const prisma = new PrismaClient();
 
-// 建立郵件傳輸器
+/**
+ * Email Transport Configuration
+ * Creates and configures Nodemailer transport
+ * Handles both secure (465) and non-secure SMTP connections
+ * Falls back gracefully if SMTP settings are missing
+ */
 let transporter;
 try {
-  // 驗證郵件配置是否存在
+  // Validate email configuration exists
   if (process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASS) {
     transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: parseInt(process.env.SMTP_PORT, 10),
-      secure: parseInt(process.env.SMTP_PORT, 10) === 465, // 如果端口是465，使用安全連接
+      secure: parseInt(process.env.SMTP_PORT, 10) === 465, // Use secure connection if port is 465
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
@@ -31,7 +49,17 @@ try {
   logger.error('Failed to initialize email transporter', { error: error.message });
 }
 
-// 創建郵件模板
+/**
+ * Create Email Template
+ * 
+ * Generates HTML email content with wedding invitation
+ * Applies consistent styling and formatting
+ * 
+ * @param {Object} couple - Couple information (names, date, venue)
+ * @param {Object} guest - Guest information
+ * @param {string} invitationContent - The personalized invitation text
+ * @returns {string} Formatted HTML for email body
+ */
 const createEmailTemplate = (couple, guest, invitationContent) => {
   return `
 <!DOCTYPE html>
@@ -93,13 +121,24 @@ const createEmailTemplate = (couple, guest, invitationContent) => {
   `;
 };
 
-// 發送邀請函郵件
+/**
+ * Send Bulk Invitations
+ * 
+ * Sends wedding invitations to multiple guests in batch
+ * Supports test mode to simulate sending without actual delivery
+ * Tracks success and failure for each recipient
+ * 
+ * @route POST /api/emails/send-invitations
+ * @param {string} req.body.coupleInfoId - ID of the couple sending invitations
+ * @param {boolean} [req.query.testMode] - If true, only simulates sending
+ * @returns {Object} Summary of send operation with success/failure counts
+ */
 exports.sendInvitation = async (req, res) => {
   try {
     const { coupleInfoId } = req.body;
     const { testMode } = req.query;
     
-    // 驗證郵件傳輸器是否可用
+    // Verify email transport is available
     if (!transporter && testMode !== 'true') {
       logger.error('Send invitation failed: email transporter not available');
       return res.status(500).json({ 
@@ -107,7 +146,7 @@ exports.sendInvitation = async (req, res) => {
       });
     }
     
-    // 獲取新人資料
+    // Get couple information
     const couple = await prisma.coupleInfo.findUnique({
       where: { id: coupleInfoId }
     });
@@ -117,7 +156,7 @@ exports.sendInvitation = async (req, res) => {
       return res.status(404).json({ message: '找不到新人資料' });
     }
     
-    // 獲取所有待發送的賓客
+    // Get all guests with generated invitations ready to send
     const guests = await prisma.guest.findMany({
       where: { 
         coupleInfoId,
@@ -139,18 +178,18 @@ exports.sendInvitation = async (req, res) => {
       testMode: testMode === 'true'
     });
     
-    // 追蹤發送結果
+    // Track sending results
     const results = {
       success: [],
       failed: []
     };
     
-    // 發送邀請函給每個賓客
+    // Send invitation to each guest
     for (const guest of guests) {
       try {
         const emailHtml = createEmailTemplate(couple, guest, guest.invitationContent);
         
-        // 如果是測試模式，不實際發送郵件
+        // If test mode, don't actually send emails
         if (testMode === 'true') {
           logger.info('Test mode: Simulating email send', { 
             guestId: guest.id, 
@@ -166,7 +205,7 @@ exports.sendInvitation = async (req, res) => {
           continue;
         }
         
-        // 發送郵件
+        // Send the email
         await transporter.sendMail({
           from: `"${couple.groomName} & ${couple.brideName}" <${process.env.FROM_EMAIL}>`,
           to: guest.email,
@@ -174,7 +213,7 @@ exports.sendInvitation = async (req, res) => {
           html: emailHtml
         });
         
-        // 更新賓客狀態
+        // Update guest status
         await prisma.guest.update({
           where: { id: guest.id },
           data: { status: 'sent' }
@@ -206,7 +245,7 @@ exports.sendInvitation = async (req, res) => {
       }
     }
     
-    // 返回結果
+    // Return results summary
     res.status(200).json({
       message: `邀請函發送完成：${results.success.length}成功，${results.failed.length}失敗`,
       results
@@ -225,13 +264,24 @@ exports.sendInvitation = async (req, res) => {
   }
 };
 
-// 發送單一邀請函郵件
+/**
+ * Send Single Invitation
+ * 
+ * Sends a wedding invitation to a single guest
+ * Useful for testing or sending individual reminders
+ * Supports test mode to simulate sending
+ * 
+ * @route POST /api/emails/send-invitation/:guestId
+ * @param {string} req.params.guestId - ID of the guest to send invitation to
+ * @param {boolean} [req.query.testMode] - If true, only simulates sending
+ * @returns {Object} Result of the send operation
+ */
 exports.sendSingleInvitation = async (req, res) => {
   try {
     const { guestId } = req.params;
     const { testMode } = req.query;
     
-    // 驗證郵件傳輸器是否可用
+    // Verify email transport is available
     if (!transporter && testMode !== 'true') {
       logger.error('Send invitation failed: email transporter not available');
       return res.status(500).json({ 
@@ -239,7 +289,7 @@ exports.sendSingleInvitation = async (req, res) => {
       });
     }
     
-    // 獲取賓客資料
+    // Get guest information
     const guest = await prisma.guest.findUnique({
       where: { id: guestId },
       include: { coupleInfo: true }
@@ -263,7 +313,7 @@ exports.sendSingleInvitation = async (req, res) => {
     
     const emailHtml = createEmailTemplate(guest.coupleInfo, guest, guest.invitationContent);
     
-    // 如果是測試模式，不實際發送郵件
+    // If test mode, don't actually send email
     if (testMode === 'true') {
       logger.info('Test mode: Simulating email send', { 
         guestId, 
@@ -282,7 +332,7 @@ exports.sendSingleInvitation = async (req, res) => {
       return;
     }
     
-    // 發送郵件
+    // Send the email
     await transporter.sendMail({
       from: `"${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName}" <${process.env.FROM_EMAIL}>`,
       to: guest.email,
@@ -290,7 +340,7 @@ exports.sendSingleInvitation = async (req, res) => {
       html: emailHtml
     });
     
-    // 更新賓客狀態
+    // Update guest status
     await prisma.guest.update({
       where: { id: guestId },
       data: { status: 'sent' }

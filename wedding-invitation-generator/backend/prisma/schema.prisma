@@ -1,62 +1,81 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Prisma Schema Definition
+//
+// This file defines the database schema for the wedding invitation generator system.
+// It includes models for couple information, guests, system logs, and API access logs.
+// The schema uses SQLite as the database provider for simplicity.
 
+// Generator configuration for Prisma Client
+// This generates the TypeScript client for database operations
 generator client {
   provider = "prisma-client-js"
 }
 
+// Database connection configuration
+// Uses SQLite for database storage with path specified in environment variables
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
+// CoupleInfo Model
+// Stores information about the couple getting married
+// This is the central entity that guests are associated with
 model CoupleInfo {
-  id          String    @id @default(uuid())
-  groomName   String
-  brideName   String
-  weddingDate DateTime
-  weddingTime String
-  weddingLocation String
-  weddingTheme String
-  backgroundStory String?
-  guests      Guest[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id          String    @id @default(uuid()) // Primary key with auto-generated UUID
+  groomName   String                         // Name of the groom
+  brideName   String                         // Name of the bride
+  weddingDate DateTime                       // Date of the wedding
+  weddingTime String                         // Time of the wedding (stored as string for flexibility)
+  weddingLocation String                     // Location/venue of the wedding
+  weddingTheme String                        // Theme of the wedding
+  backgroundStory String?                    // Optional story about the couple's background
+  guests      Guest[]                        // One-to-many relationship with Guest model
+  createdAt   DateTime  @default(now())      // Timestamp when record was created
+  updatedAt   DateTime  @updatedAt           // Timestamp when record was last updated
 }
 
+// Guest Model
+// Stores information about wedding guests and their invitations
+// Each guest is associated with a specific couple
 model Guest {
-  id           String    @id @default(uuid())
-  name         String
-  relationship String
-  email        String
-  preferences  String?
-  howMet       String?
-  memories     String?
-  status       String    // pending, generated, edited, sent
-  invitationContent String?
-  coupleInfo   CoupleInfo @relation(fields: [coupleInfoId], references: [id])
-  coupleInfoId String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id           String    @id @default(uuid()) // Primary key with auto-generated UUID
+  name         String                         // Name of the guest
+  relationship String                         // Relationship to the couple (e.g., "family", "friend")
+  email        String                         // Email address for sending invitation
+  preferences  String?                        // Optional guest preferences
+  howMet       String?                        // Optional story of how the guest met the couple
+  memories     String?                        // Optional shared memories with the couple
+  status       String                         // Status of the invitation process:
+                                             // "pending": Not yet generated
+                                             // "generated": Invitation created
+                                             // "edited": Invitation manually modified
+                                             // "sent": Invitation email sent
+  invitationContent String?                   // The generated/edited invitation text
+  coupleInfo   CoupleInfo @relation(fields: [coupleInfoId], references: [id]) // Relationship to CoupleInfo
+  coupleInfoId String                         // Foreign key to CoupleInfo
+  createdAt    DateTime  @default(now())      // Timestamp when record was created
+  updatedAt    DateTime  @updatedAt           // Timestamp when record was last updated
 }
 
-// 日誌表用於追蹤系統操作
+// SystemLog Model
+// Tracks system operations and errors for monitoring and debugging
 model SystemLog {
-  id           String    @id @default(uuid())
-  level        String    // info, warn, error
-  message      String
-  metadata     String?   // JSON string
-  timestamp    DateTime  @default(now())
+  id           String    @id @default(uuid()) // Primary key with auto-generated UUID
+  level        String                         // Log level (info, warn, error)
+  message      String                         // Log message content
+  metadata     String?                        // Additional structured data (stored as JSON string)
+  timestamp    DateTime  @default(now())      // When the log entry was created
 }
 
-// API訪問日誌表
+// ApiAccessLog Model
+// Records API requests for monitoring, analytics, and security
 model ApiAccessLog {
-  id           String    @id @default(uuid())
-  endpoint     String
-  method       String
-  statusCode   Int
-  responseTime Int       // ms
-  userIp       String?
-  userAgent    String?
-  timestamp    DateTime  @default(now())
+  id           String    @id @default(uuid()) // Primary key with auto-generated UUID
+  endpoint     String                         // API endpoint that was accessed
+  method       String                         // HTTP method (GET, POST, etc.)
+  statusCode   Int                            // HTTP response status code
+  responseTime Int                            // Request-response time in milliseconds
+  userIp       String?                        // IP address of the requester
+  userAgent    String?                        // User agent string from the request
+  timestamp    DateTime  @default(now())      // When the request occurred
 } 

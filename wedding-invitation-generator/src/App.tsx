@@ -1,10 +1,22 @@
+/**
+ * Main Application Component
+ * 
+ * This is the root component of the wedding invitation generator application.
+ * It sets up the application structure including:
+ * - React Router for navigation
+ * - Framer Motion for page transitions
+ * - WeddingContext for global state management
+ * 
+ * The application follows a step-based workflow where users progress through
+ * different stages of the invitation creation process.
+ */
 import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { WeddingProvider } from './context/WeddingContext';
 import { Step } from './types';
 
-// 頁面組件
+// Import page components
 import WelcomePage from './pages/WelcomePage';
 import CoupleInfoPage from './pages/CoupleInfoPage';
 import GuestInfoPage from './pages/GuestInfoPage';
@@ -12,7 +24,15 @@ import PreviewPage from './pages/PreviewPage';
 import ConfirmationPage from './pages/ConfirmationPage';
 import CompletePage from './pages/CompletePage';
 
-// 根據步驟獲取對應頁面
+/**
+ * Maps application steps to their corresponding page components
+ * 
+ * This function returns the appropriate React component based on the current step
+ * in the wedding invitation creation process.
+ * 
+ * @param {Step} step - Current application step from the enum
+ * @returns {JSX.Element} The component corresponding to the current step
+ */
 const getPageByStep = (step: Step) => {
   switch (step) {
     case Step.Welcome:
@@ -32,8 +52,15 @@ const getPageByStep = (step: Step) => {
   }
 };
 
-// 主應用組件
-// 設置路由和全局上下文，提供整個應用的骨架結構
+/**
+ * App Component
+ * 
+ * The main application component that sets up the context provider
+ * and routing structure. Although we use React Router, the actual
+ * navigation is handled by the WeddingContext state.
+ * 
+ * @returns {JSX.Element} The complete application structure
+ */
 const App: React.FC = () => {
   return (
     <WeddingProvider>
@@ -46,8 +73,15 @@ const App: React.FC = () => {
   );
 };
 
-// 步驟管理器組件
-// 負責根據當前的步驟顯示對應的頁面組件
+/**
+ * Step Manager Component
+ * 
+ * This component is responsible for rendering the appropriate page
+ * based on the current step in the WeddingContext. It uses Framer Motion's
+ * AnimatePresence to handle smooth transitions between pages.
+ * 
+ * @returns {JSX.Element} The current step's page component
+ */
 const StepManager: React.FC = () => {
   const { state } = useWedding();
   
@@ -58,7 +92,7 @@ const StepManager: React.FC = () => {
   );
 };
 
-// 引入useWedding hook
+// Import the Wedding context hook
 import { useWedding } from './context/WeddingContext';
 
 export default App;

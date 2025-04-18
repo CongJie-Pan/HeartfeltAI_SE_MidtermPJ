@@ -1,3 +1,20 @@
+/**
+ * Complete Page
+ * 
+ * This is the final page of the application flow, showing a congratulatory
+ * message and summary after all invitations have been sent. It includes
+ * animations and visual effects to create a celebratory atmosphere.
+ * 
+ * Key features:
+ * - Success message with animation
+ * - Statistics about sent invitations
+ * - Decorative animations (falling petals and fireworks)
+ * - Return to home option
+ * 
+ * This component uses Framer Motion for animations. Framer Motion is a
+ * popular animation library for React that simplifies creating smooth,
+ * interactive animations with a declarative API.
+ */
 import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useWedding } from '../context/WeddingContext';
@@ -5,31 +22,46 @@ import { Step } from '../types';
 import ProgressIndicator from '../components/ProgressIndicator';
 import FallingPetals from '../components/FallingPetals';
 
-// 完成頁面組件
-// 這是整個流程的最後一頁，顯示成功發送的提示及統計資訊
+/**
+ * CompletePage Component
+ * 
+ * The final screen that appears after all invitations have been sent.
+ * Displays a success message with animations and overall statistics.
+ * 
+ * @returns {JSX.Element} The complete page component
+ */
 const CompletePage: React.FC = () => {
   const { state, dispatch } = useWedding();
   
-  // 進入頁面時確保步驟正確
+  /**
+   * Ensure the correct step is set when this page is loaded
+   * This prevents navigation issues if this page is accessed directly
+   */
   useEffect(() => {
     dispatch({ type: 'SET_STEP', payload: Step.Complete });
   }, [dispatch]);
   
-  // 成功發送的數量
+  // Count the number of successfully sent invitations
   const sentCount = state.guests.filter(guest => guest.status === 'sent').length;
   
-  // 動畫配置
+  /**
+   * Animation configurations using Framer Motion
+   * These define how elements will animate when they appear on screen
+   */
+  
+  // Animation for the container element (staggered children)
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { 
       opacity: 1,
       transition: { 
         duration: 0.8,
-        staggerChildren: 0.3
+        staggerChildren: 0.3  // Children will animate with a 0.3s delay between each
       }
     }
   };
   
+  // Animation for individual items within the container
   const itemVariants = {
     hidden: { y: 20, opacity: 0 },
     visible: { 
@@ -39,21 +71,21 @@ const CompletePage: React.FC = () => {
     }
   };
   
-  // 禮花動畫
+  // Animation for the firework effects
   const fireWorkVariants = {
     hidden: { scale: 0, opacity: 0 },
     visible: { 
-      scale: [0, 1.2, 1],
-      opacity: [0, 1, 0.8],
+      scale: [0, 1.2, 1],        // Array creates keyframes: start at 0, expand to 1.2, then settle at 1
+      opacity: [0, 1, 0.8],      // Keyframes for opacity: invisible, fully visible, then slightly fade
       transition: { 
         duration: 0.8,
-        repeat: Infinity,
-        repeatDelay: 3 
+        repeat: Infinity,        // Animation repeats indefinitely
+        repeatDelay: 3           // Delay between repetitions
       }
     }
   };
   
-  // 模擬禮花位置
+  // Define positions and properties for the firework animations
   const fireworks = [
     { id: 1, color: '#FFD1DC', top: '15%', left: '10%', delay: 0 },
     { id: 2, color: '#FFA07A', top: '25%', left: '85%', delay: 0.5 },
@@ -64,10 +96,10 @@ const CompletePage: React.FC = () => {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      {/* 背景效果 */}
+      {/* Background animation for aesthetic appeal */}
       <FallingPetals />
       
-      {/* 禮花效果 */}
+      {/* Firework animation effects */}
       {fireworks.map((fw) => (
         <motion.div
           key={fw.id}
@@ -76,7 +108,7 @@ const CompletePage: React.FC = () => {
             top: fw.top, 
             left: fw.left, 
             backgroundColor: fw.color,
-            boxShadow: `0 0 30px ${fw.color}`  
+            boxShadow: `0 0 30px ${fw.color}`  // Creates a glow effect
           }}
           variants={fireWorkVariants}
           initial="hidden"
@@ -86,7 +118,7 @@ const CompletePage: React.FC = () => {
       ))}
       
       <div className="container mx-auto py-12 px-4 min-h-screen flex flex-col items-center justify-center z-10 relative">
-        {/* 進度指示器 */}
+        {/* Progress indicator shows we're at the final step */}
         <ProgressIndicator />
         
         <motion.div
@@ -95,7 +127,7 @@ const CompletePage: React.FC = () => {
           initial="hidden"
           animate="visible"
         >
-          {/* 成功圖標 */}
+          {/* Success icon with animation */}
           <motion.div 
             className="mb-8 mx-auto"
             variants={itemVariants}
@@ -107,7 +139,7 @@ const CompletePage: React.FC = () => {
             </div>
           </motion.div>
           
-          {/* 標題 */}
+          {/* Main title with animation */}
           <motion.h1 
             className="text-4xl font-serif font-bold mb-4 text-wedding-dark"
             variants={itemVariants}
@@ -115,7 +147,7 @@ const CompletePage: React.FC = () => {
             恭喜！所有邀請函已成功發送
           </motion.h1>
           
-          {/* 副標題 */}
+          {/* Subtitle with animation */}
           <motion.h2 
             className="text-xl font-light mb-8 text-wedding-dark"
             variants={itemVariants}
@@ -123,7 +155,7 @@ const CompletePage: React.FC = () => {
             您的賓客將收到獨一無二的邀請函
           </motion.h2>
           
-          {/* 統計資訊 */}
+          {/* Statistics card with animation */}
           <motion.div 
             className="bg-white rounded-xl shadow-md p-6 mb-10"
             variants={itemVariants}
@@ -145,7 +177,7 @@ const CompletePage: React.FC = () => {
             </div>
           </motion.div>
           
-          {/* 按鈕區域 */}
+          {/* Action buttons with animation */}
           <motion.div
             className="flex justify-center space-x-4"
             variants={itemVariants}
@@ -155,7 +187,7 @@ const CompletePage: React.FC = () => {
               className="btn-primary"
               onClick={(e) => {
                 e.preventDefault();
-                window.location.reload();
+                window.location.reload();  // Reload the application to start over
               }}
             >
               返回首頁

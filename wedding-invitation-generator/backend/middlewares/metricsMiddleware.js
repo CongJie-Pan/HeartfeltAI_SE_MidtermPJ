@@ -1,9 +1,25 @@
+/**
+ * Metrics Middleware
+ * 
+ * Implements application metrics collection and monitoring using Prometheus.
+ * Tracks key performance indicators like request duration, count, and error rates.
+ * 
+ * Prometheus is an open-source systems monitoring and alerting toolkit originally
+ * built at SoundCloud. It collects and stores time series data with powerful 
+ * querying capabilities, making it ideal for monitoring application performance.
+ */
 const prometheusClient = require('prom-client');
 
-// 啟用默認指標收集
+// Enable collection of default metrics (CPU, memory, event loop, etc.)
 prometheusClient.collectDefaultMetrics();
 
-// 創建自定義計數器和直方圖
+/**
+ * HTTP Request Duration Histogram
+ * 
+ * Measures the duration of HTTP requests in milliseconds.
+ * Categorized by method, route path, and response status code.
+ * Uses histogram buckets to track distribution of request durations.
+ */
 const httpRequestDurationMicroseconds = new prometheusClient.Histogram({
   name: 'http_request_duration_ms',
   help: 'Duration of HTTP requests in ms',
@@ -11,50 +27,82 @@ const httpRequestDurationMicroseconds = new prometheusClient.Histogram({
   buckets: [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
 });
 
+/**
+ * HTTP Request Counter
+ * 
+ * Counts the total number of HTTP requests received.
+ * Categorized by method, route path, and response status code.
+ * Useful for tracking traffic patterns and endpoint usage.
+ */
 const httpRequestCounter = new prometheusClient.Counter({
   name: 'http_requests_total',
   help: 'Counter for total requests received',
   labelNames: ['method', 'route', 'status_code']
 });
 
+/**
+ * HTTP Error Counter
+ * 
+ * Counts the total number of HTTP errors (status code >= 400).
+ * Categorized by method, route path, and response status code.
+ * Helps identify problematic endpoints and client/server errors.
+ */
 const errorCounter = new prometheusClient.Counter({
   name: 'http_errors_total',
   help: 'Counter for total errors',
   labelNames: ['method', 'route', 'status_code']
 });
 
+/**
+ * API Rate Limit Counter
+ * 
+ * Counts how many times rate limits have been hit.
+ * Categorized by method, route path, and client IP address.
+ * Helps identify potential abuse or needed capacity adjustments.
+ */
 const apiLimitCounter = new prometheusClient.Counter({
   name: 'api_rate_limit_total',
   help: 'Counter for API rate limit hits',
   labelNames: ['method', 'route', 'ip']
 });
 
+/**
+ * Metrics Collection Middleware
+ * 
+ * Captures timing and counting metrics for each request.
+ * Uses the response 'finish' event to ensure metrics are captured
+ * even for requests that error out or are otherwise interrupted.
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
 const metricsMiddleware = (req, res, next) => {
   const start = Date.now();
   
-  // 當響應完成時收集指標
+  // Collect metrics when response finishes
   res.on('finish', () => {
     const duration = Date.now() - start;
     const { statusCode } = res;
     const { method, originalUrl } = req;
     
     let routePath = originalUrl;
-    // 嘗試獲取路由路徑而不是具體URL (例如: /api/users/123 轉為 /api/users/:id)
+    // Try to get route path instead of specific URL (e.g. /api/users/123 -> /api/users/:id)
     if (req.route && req.route.path) {
       routePath = req.baseUrl + req.route.path;
     }
     
-    // 記錄請求持續時間
+    // Record request duration
     httpRequestDurationMicroseconds
       .labels(method, routePath, statusCode)
       .observe(duration);
       
-    // 增加請求計數
+    // Increment request counter
     httpRequestCounter
       .labels(method, routePath, statusCode)
       .inc();
       
-    // 如果是錯誤響應，增加錯誤計數
+    // If error response, increment error counter
     if (statusCode >= 400) {
       errorCounter
         .labels(method, routePath, statusCode)
@@ -65,7 +113,15 @@ const metricsMiddleware = (req, res, next) => {
   next();
 };
 
-// 指標端點處理器
+/**
+ * Metrics Endpoint Handler
+ * 
+ * Serves Prometheus-formatted metrics for scraping.
+ * Can be disabled via environment variable for security in certain deployments.
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
 const metricsHandler = async (req, res) => {
   if (!process.env.ENABLE_METRICS) {
     return res.status(404).json({ message: 'Metrics not enabled' });

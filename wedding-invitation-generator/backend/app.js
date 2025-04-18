@@ -1,3 +1,15 @@
+/**
+ * Main Application Configuration
+ * 
+ * This file configures the Express application, including middleware setup,
+ * route registration, security configuration, and error handling.
+ * 
+ * Key components:
+ * - Express middleware configuration for parsing, security, and logging
+ * - API routes registration for all application features
+ * - Static file serving for the frontend in production
+ * - Global error handling and 404 route handling
+ */
 const express = require('express');
 const dotenv = require('dotenv');
 const path = require('path');
@@ -10,38 +22,70 @@ const configSecurity = require('./config/security');
 const { authenticateToken, adminOnly } = require('./middlewares/auth');
 const errorHandler = require('./middlewares/errorHandler');
 
-// 路由引入
+/**
+ * Import route modules
+ * Each module handles a specific feature area of the API
+ */
 const coupleRoutes = require('./routes/coupleRoutes');
 const guestRoutes = require('./routes/guestRoutes');
 const invitationRoutes = require('./routes/invitationRoutes');
 const emailRoutes = require('./routes/emailRoutes');
 const healthRoutes = require('./routes/healthRoutes');
 
-// 環境變數設置
+// Load environment variables from .env file
 dotenv.config();
 
+// Initialize Express app
 const app = express();
 
-// 基本中間件
+/**
+ * Basic Middleware Configuration
+ * 
+ * - express.json: Parses incoming JSON payloads (limited to 1MB)
+ * - express.urlencoded: Parses URL-encoded form data
+ */
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-// 安全設定
+/**
+ * Security Configuration
+ * 
+ * Applies various security measures:
+ * - Helmet for secure HTTP headers
+ * - CORS configuration
+ * - Rate limiting
+ * - Request throttling
+ */
 configSecurity(app);
 
-// 監控中間件
+/**
+ * Monitoring and Logging Middleware
+ * 
+ * - metricsMiddleware: Collects Prometheus metrics for monitoring
+ * - apiLogger: Logs detailed API request information
+ * - morgan: HTTP request logging in combined format
+ */
 app.use(metricsMiddleware);
 app.use(apiLogger);
 
-// HTTP請求記錄
+// HTTP request logging (disabled in test environment)
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
 }
 
-// 健康檢查路由（需在驗證前）
+/**
+ * Health Check Routes
+ * 
+ * These routes are registered before authentication to allow for
+ * system monitoring and health checks without authentication
+ */
 app.use('/api', healthRoutes);
 
-// 根路徑處理
+/**
+ * Root Path Handler
+ * 
+ * Provides basic API information at the root endpoint
+ */
 app.get('/', (req, res) => {
   res.status(200).json({
     name: '婚禮邀請函生成系統 API',
@@ -52,16 +96,34 @@ app.get('/', (req, res) => {
   });
 });
 
-// 公開API路由
+/**
+ * API Routes Registration
+ * 
+ * These routes handle all the core functionality of the application:
+ * - Couple information management
+ * - Guest management
+ * - Invitation generation and management
+ * - Email delivery
+ */
 app.use('/api/couple', coupleRoutes);
 app.use('/api/guests', guestRoutes);
 app.use('/api/invitations', invitationRoutes);
 app.use('/api/emails', emailRoutes);
 
-// 監控指標端點（受保護）
+/**
+ * Metrics Endpoint (Protected)
+ * 
+ * Provides Prometheus-compatible metrics for monitoring
+ * Requires authentication and admin privileges for security
+ */
 app.get('/api/metrics', authenticateToken, adminOnly, metricsHandler);
 
-// 前端靜態文件服務 (生產環境)
+/**
+ * Frontend Static Files (Production Only)
+ * 
+ * In production, serves the built frontend React app
+ * Also handles client-side routing by serving index.html for all unmatched routes
+ */
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../frontend/build')));
   
@@ -70,10 +132,20 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// 全局錯誤處理中間件
+/**
+ * Global Error Handler
+ * 
+ * Catches any errors thrown during request processing
+ * Logs errors and returns appropriate responses
+ */
 app.use(errorHandler);
 
-// 未找到路由處理
+/**
+ * 404 Handler
+ * 
+ * Handles requests to non-existent routes
+ * Must be registered after all other routes
+ */
 app.use((req, res) => {
   logger.warn(`Route not found: ${req.method} ${req.url}`, { ip: req.ip });
   res.status(404).json({ message: '找不到請求的資源' });

@@ -1,7 +1,25 @@
+/**
+ * API Logger Middleware
+ * 
+ * This middleware logs detailed information about each API request and response.
+ * It tracks request timing, response status codes, and other metadata.
+ * In production, it also persists this information to the database for analytics.
+ * 
+ * Key features:
+ * - Logs request method, URL, IP, and user agent
+ * - Measures and records response time for performance monitoring
+ * - Logs response status code to track errors
+ * - In production, writes log entries to the database
+ */
 const { PrismaClient } = require('@prisma/client');
 const logger = require('../config/logger');
 
-// 延遲初始化Prisma，確保在首次使用時才創建實例
+/**
+ * Lazy initialization for Prisma client
+ * Only creates the database connection when first needed
+ * This improves startup performance and prevents issues
+ * with database availability during server initialization
+ */
 let _prisma = null;
 const getPrisma = () => {
   if (!_prisma) {
@@ -10,15 +28,25 @@ const getPrisma = () => {
   return _prisma;
 };
 
+/**
+ * API Logger Middleware Function
+ * 
+ * Intercepts requests and responses to log API activity.
+ * Uses function wrapping to capture response data after completion.
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
 const apiLogger = async (req, res, next) => {
   const start = Date.now();
   
-  // 保存原始的res.end方法
+  // Save the original res.end method for later restoration
   const originalEnd = res.end;
   
-  // 重寫res.end方法，用於記錄完成時間和狀態碼
+  // Override res.end to capture response metadata before completion
   res.end = function(chunk, encoding) {
-    // 調用原始方法
+    // Call the original method to ensure normal response flow
     originalEnd.call(this, chunk, encoding);
     
     const responseTime = Date.now() - start;
@@ -26,7 +54,7 @@ const apiLogger = async (req, res, next) => {
     const userAgent = headers['user-agent'] || '';
     const statusCode = res.statusCode;
     
-    // 寫入Winston日誌
+    // Log to Winston logger system
     logger.info(`${method} ${originalUrl} ${statusCode} ${responseTime}ms`, {
       method,
       url: originalUrl,
@@ -36,9 +64,9 @@ const apiLogger = async (req, res, next) => {
       userAgent
     });
     
-    // 只在生產環境中寫入數據庫日誌
+    // Only log to database in production environment
     if (process.env.NODE_ENV === 'production') {
-      // 寫入數據庫日誌 (異步操作，不影響響應)
+      // Write to database log (async operation, doesn't block response)
       getPrisma().apiAccessLog.create({
         data: {
           endpoint: originalUrl,
