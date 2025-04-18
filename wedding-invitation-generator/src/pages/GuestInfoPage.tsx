@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Formik, Form, Field, ErrorMessage } from 'formik';
 import * as Yup from 'yup';
 import { motion } from 'framer-motion';
 import ProgressIndicator from '../components/ProgressIndicator';
 import { useWedding } from '../context/WeddingContext';
 import { GuestInfo, RelationshipType } from '../types';
+import api from '../services/api';
 
 // 賓客資料表單驗證規則
 const GuestInfoSchema = Yup.object().shape({
@@ -31,6 +32,36 @@ const relationshipOptions: RelationshipType[] = [
 const GuestInfoPage: React.FC = () => {
   const { state, dispatch, nextStep, prevStep } = useWedding();
   const [editingGuest, setEditingGuest] = useState<GuestInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // 頁面載入時，嘗試從後端獲取賓客列表
+  useEffect(() => {
+    const fetchGuests = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        const response = await api.guests.getAll();
+        if (response.data && response.data.length > 0) {
+          // 如果後端已有賓客數據，更新到前端狀態
+          response.data.forEach(guest => {
+            dispatch({
+              type: 'ADD_GUEST',
+              payload: guest
+            });
+          });
+        }
+      } catch (err) {
+        console.error('獲取賓客列表時出錯:', err);
+        setError('無法獲取賓客列表，請稍後再試。');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchGuests();
+  }, [dispatch]);
   
   // 初始賓客資料
   const initialValues: Omit<GuestInfo, 'id'> = {
@@ -44,29 +75,49 @@ const GuestInfoPage: React.FC = () => {
   };
   
   // 處理表單提交 - 添加或更新賓客
-  const handleSubmit = (values: Omit<GuestInfo, 'id'>, { resetForm }: { resetForm: () => void }) => {
-    if (editingGuest) {
-      // 更新現有賓客
-      dispatch({
-        type: 'UPDATE_GUEST',
-        payload: { ...values, id: editingGuest.id }
-      });
-      setEditingGuest(null);
-    } else {
-      // 添加新賓客
-      dispatch({
-        type: 'ADD_GUEST',
-        payload: { ...values, id: crypto.randomUUID() }
-      });
+  const handleSubmit = async (values: Omit<GuestInfo, 'id'>, { resetForm, setSubmitting }: { resetForm: () => void, setSubmitting: (isSubmitting: boolean) => void }) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      if (editingGuest) {
+        // 更新現有賓客
+        const guestData = { ...values, id: editingGuest.id };
+        await api.guests.update(editingGuest.id, guestData);
+        
+        // 更新前端狀態
+        dispatch({
+          type: 'UPDATE_GUEST',
+          payload: guestData
+        });
+        setEditingGuest(null);
+      } else {
+        // 添加新賓客
+        const newGuest = { ...values, id: crypto.randomUUID() };
+        const response = await api.guests.add(newGuest);
+        
+        // 使用後端返回的數據更新前端狀態
+        dispatch({
+          type: 'ADD_GUEST',
+          payload: response.data || newGuest
+        });
+      }
+      
+      // 重置表單
+      resetForm();
+    } catch (err) {
+      console.error('保存賓客資料時出錯:', err);
+      setError('無法保存賓客資料，請稍後再試。');
+    } finally {
+      setSubmitting(false);
+      setIsLoading(false);
     }
-    
-    // 重置表單
-    resetForm();
   };
   
   // 編輯賓客
   const handleEdit = (guest: GuestInfo) => {
     setEditingGuest(guest);
+    setError(null);
   };
   
   // 取消編輯
@@ -75,9 +126,23 @@ const GuestInfoPage: React.FC = () => {
   };
   
   // 刪除賓客
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (window.confirm('確定要刪除此賓客嗎？')) {
-      dispatch({ type: 'REMOVE_GUEST', payload: id });
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        // 呼叫API刪除賓客
+        await api.guests.delete(id);
+        
+        // 更新前端狀態
+        dispatch({ type: 'REMOVE_GUEST', payload: id });
+      } catch (err) {
+        console.error('刪除賓客時出錯:', err);
+        setError('無法刪除賓客，請稍後再試。');
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
   
@@ -130,6 +195,24 @@ const GuestInfoPage: React.FC = () => {
       
       {/* 進度指示器 */}
       <ProgressIndicator />
+      
+      {/* 錯誤訊息顯示 */}
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
+      
+      {/* 加載指示器 */}
+      {isLoading && (
+        <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4 flex items-center">
+          <svg className="animate-spin h-5 w-5 mr-3 text-blue-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          處理中...
+        </div>
+      )}
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* 表單部分 */}

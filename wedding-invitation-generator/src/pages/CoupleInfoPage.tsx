@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Formik, Form, Field, ErrorMessage } from 'formik';
 import * as Yup from 'yup';
 import { motion } from 'framer-motion';
 import ProgressIndicator from '../components/ProgressIndicator';
 import { useWedding } from '../context/WeddingContext';
 import { CoupleInfo } from '../types';
+import api from '../services/api';
 
 // 定義表單驗證規則
 const CoupleInfoSchema = Yup.object().shape({
@@ -34,13 +35,29 @@ const themeOptions = [
 // 該頁面讓新人輸入基本資料，作為生成邀請函的基礎
 const CoupleInfoPage: React.FC = () => {
   const { state, dispatch, nextStep } = useWedding();
+  const [submitError, setSubmitError] = useState<string | null>(null);
   
   // 處理表單提交
-  const handleSubmit = (values: CoupleInfo) => {
-    // 儲存新人資料到全局狀態
-    dispatch({ type: 'SET_COUPLE_INFO', payload: values });
-    // 前進到下一步
-    nextStep();
+  const handleSubmit = async (values: CoupleInfo, { setSubmitting }: { setSubmitting: (isSubmitting: boolean) => void }) => {
+    try {
+      setSubmitError(null);
+      dispatch({ type: 'SET_LOADING', payload: true });
+      
+      // 儲存新人資料到後端
+      await api.couple.save(values);
+      
+      // 儲存新人資料到全局狀態
+      dispatch({ type: 'SET_COUPLE_INFO', payload: values });
+      
+      // 前進到下一步
+      nextStep();
+    } catch (error) {
+      console.error('保存新人資料時出錯:', error);
+      setSubmitError('無法保存資料，請稍後再試。');
+    } finally {
+      setSubmitting(false);
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
   };
   
   // 動畫配置
@@ -71,6 +88,12 @@ const CoupleInfoPage: React.FC = () => {
       
       <div className="card bg-white shadow-md rounded-xl p-6 md:p-8">
         <p className="text-sm text-wedding-dark mb-6">請完整填寫以下資料，以便生成專屬邀請函</p>
+        
+        {submitError && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+            {submitError}
+          </div>
+        )}
         
         <Formik
           initialValues={state.coupleInfo}

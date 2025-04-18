@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ProgressIndicator from '../components/ProgressIndicator';
 import { useWedding } from '../context/WeddingContext';
 import { GuestInfo } from '../types';
+import api from '../services/api';
 
 // 最終確認頁面組件
 // 提供最終的邀請函確認，展示將要發送的內容，並允許刪除或編輯
@@ -13,13 +14,24 @@ const ConfirmationPage: React.FC = () => {
   const [editMode, setEditMode] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sentCount, setSentCount] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   
   // 處理刪除賓客
-  const handleDeleteGuest = (id: string) => {
+  const handleDeleteGuest = async (id: string) => {
     if (window.confirm('確定要刪除此賓客的邀請函？')) {
-      dispatch({ type: 'REMOVE_GUEST', payload: id });
-      if (selectedGuest && selectedGuest.id === id) {
-        setSelectedGuest(null);
+      try {
+        // 呼叫 API 刪除賓客
+        await api.guests.delete(id);
+        
+        // 更新 Redux 狀態
+        dispatch({ type: 'REMOVE_GUEST', payload: id });
+        
+        if (selectedGuest && selectedGuest.id === id) {
+          setSelectedGuest(null);
+        }
+      } catch (error) {
+        console.error('刪除賓客時出錯:', error);
+        setError('無法刪除賓客，請稍後再試。');
       }
     }
   };
@@ -45,17 +57,29 @@ const ConfirmationPage: React.FC = () => {
   };
   
   // 處理保存編輯
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (selectedGuest && editContent.trim()) {
-      dispatch({
-        type: 'UPDATE_INVITATION',
-        payload: {
-          guestId: selectedGuest.id,
-          content: editContent,
-          status: 'edited'
-        }
-      });
-      setEditMode(false);
+      try {
+        setError(null);
+        
+        // 使用 API 更新邀請函文字
+        await api.invitations.update(selectedGuest.id, editContent);
+        
+        // 更新 Redux 狀態
+        dispatch({
+          type: 'UPDATE_INVITATION',
+          payload: {
+            guestId: selectedGuest.id,
+            content: editContent,
+            status: 'edited'
+          }
+        });
+        
+        setEditMode(false);
+      } catch (error) {
+        console.error('更新邀請函文字時出錯:', error);
+        setError('無法更新邀請函，請稍後再試。');
+      }
     }
   };
   
@@ -65,33 +89,72 @@ const ConfirmationPage: React.FC = () => {
   };
   
   // 處理發送所有邀請函
-  const handleSendAll = () => {
+  const handleSendAll = async () => {
     if (window.confirm(`確定要發送${state.guests.length}份邀請函嗎？`)) {
-      setIsSending(true);
-      
-      // 模擬發送過程
-      let count = 0;
-      const interval = setInterval(() => {
-        if (count < state.guests.length) {
+      try {
+        setIsSending(true);
+        setError(null);
+        setSentCount(0);
+        
+        // 調用 API 發送所有邀請函
+        await api.emails.sendAll();
+        
+        // 實際應用中可能需要等待後端通知發送進度
+        // 這裡簡化為直接更新狀態
+        for (let i = 0; i < state.guests.length; i++) {
+          const guest = state.guests[i];
+          
           // 更新當前賓客的狀態
           dispatch({
             type: 'UPDATE_INVITATION',
             payload: {
-              guestId: state.guests[count].id,
-              content: state.guests[count].invitationContent || '',
+              guestId: guest.id,
+              content: guest.invitationContent || '',
               status: 'sent'
             }
           });
           
-          count++;
-          setSentCount(count);
-        } else {
-          clearInterval(interval);
-          setIsSending(false);
-          // 所有邀請函發送完畢，進入完成頁面
-          nextStep();
+          setSentCount(i + 1);
+          // 添加一點延遲以模擬發送過程
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
-      }, 500); // 每500毫秒模擬發送一封邀請函
+        
+        // 所有邀請函發送完畢，進入完成頁面
+        nextStep();
+      } catch (error) {
+        console.error('發送邀請函時出錯:', error);
+        setError('發送邀請函時出錯，請稍後再試。');
+      } finally {
+        setIsSending(false);
+      }
+    }
+  };
+  
+  // 處理單個邀請函發送
+  const handleSendOne = async (guestId: string) => {
+    try {
+      const guest = state.guests.find(g => g.id === guestId);
+      if (!guest) return;
+      
+      setError(null);
+      
+      // 調用 API 發送單個邀請函
+      await api.emails.send(guestId);
+      
+      // 更新賓客狀態
+      dispatch({
+        type: 'UPDATE_INVITATION',
+        payload: {
+          guestId,
+          content: guest.invitationContent || '',
+          status: 'sent'
+        }
+      });
+      
+      alert(`已成功發送給 ${guest.name} 的邀請函！`);
+    } catch (error) {
+      console.error('發送邀請函時出錯:', error);
+      setError(`發送給此賓客的邀請函時出錯，請稍後再試。`);
     }
   };
   
@@ -149,6 +212,13 @@ const ConfirmationPage: React.FC = () => {
       {/* 進度指示器 */}
       <ProgressIndicator />
       
+      {/* 錯誤訊息 */}
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
+      
       {/* 賓客邀請函列表 */}
       <div className="mt-8">
         <h2 className="text-xl font-medium mb-4 text-wedding-dark">所有邀請函</h2>
@@ -197,6 +267,13 @@ const ConfirmationPage: React.FC = () => {
                           className="text-blue-500 hover:text-blue-700"
                         >
                           查看
+                        </button>
+                        <button
+                          onClick={() => handleSendOne(guest.id)}
+                          className="text-green-500 hover:text-green-700"
+                          disabled={guest.status === 'sent' || isSending}
+                        >
+                          發送
                         </button>
                         <button
                           onClick={() => handleDeleteGuest(guest.id)}

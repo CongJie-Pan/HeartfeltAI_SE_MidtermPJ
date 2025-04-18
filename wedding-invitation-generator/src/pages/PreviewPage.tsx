@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ProgressIndicator from '../components/ProgressIndicator';
 import { useWedding } from '../context/WeddingContext';
 import { GuestInfo } from '../types';
+import api from '../services/api';
 
 // 虛擬邀請函背景圖片
 const templateImage = 'https://images.unsplash.com/photo-1523438885200-e635ba2c371e?q=80&w=600&auto=format&fit=crop';
@@ -14,28 +15,58 @@ const PreviewPage: React.FC = () => {
   const [selectedGuest, setSelectedGuest] = useState<GuestInfo | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [invitationFeedback, setInvitationFeedback] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   // 頁面載入時，確保所有賓客都有邀請函文字
   useEffect(() => {
-    // 檢查所有賓客，為沒有邀請函文字的賓客生成文字
-    state.guests.forEach(guest => {
-      if (!guest.invitationContent) {
-        const content = generateInvitation(guest);
-        dispatch({
-          type: 'UPDATE_INVITATION',
-          payload: {
-            guestId: guest.id,
-            content,
-            status: 'generated'
+    const generateAllInvitations = async () => {
+      try {
+        dispatch({ type: 'SET_LOADING', payload: true });
+        
+        // 對於每個沒有邀請函文字的賓客，使用 API 生成
+        for (const guest of state.guests) {
+          if (!guest.invitationContent) {
+            try {
+              const response = await api.invitations.generate(guest.id);
+              dispatch({
+                type: 'UPDATE_INVITATION',
+                payload: {
+                  guestId: guest.id,
+                  content: response.data.invitationContent,
+                  status: 'generated'
+                }
+              });
+            } catch (err) {
+              console.error(`無法為賓客 ${guest.name} 生成邀請函:`, err);
+              // 如果 API 請求失敗，使用本地生成的文字作為備用
+              const fallbackContent = generateFallbackInvitation(guest);
+              dispatch({
+                type: 'UPDATE_INVITATION',
+                payload: {
+                  guestId: guest.id,
+                  content: fallbackContent,
+                  status: 'generated'
+                }
+              });
+            }
           }
-        });
+        }
+      } catch (error) {
+        console.error('生成邀請函時出錯:', error);
+        setError('無法生成部分邀請函，請稍後再試。');
+      } finally {
+        dispatch({ type: 'SET_LOADING', payload: false });
       }
-    });
+    };
+    
+    if (state.guests.length > 0) {
+      generateAllInvitations();
+    }
   }, [state.guests, dispatch]);
   
-  // 模擬生成邀請函內容
-  const generateInvitation = (guest: GuestInfo) => {
-    // 實際使用時，這應該是從API請求獲取的內容
+  // 生成後備邀請函內容（當 API 請求失敗時使用）
+  const generateFallbackInvitation = (guest: GuestInfo) => {
     return `
       尊敬的 ${guest.name} ${guest.relationship === '親戚' || guest.relationship === '家人' ? '家人' : '先生/女士'}：
       
@@ -55,28 +86,59 @@ const PreviewPage: React.FC = () => {
   };
   
   // 處理預覽邀請函
-  const handlePreviewInvitation = (guest: GuestInfo) => {
-    // 如果邀請函文字尚未生成，則立即生成
-    let currentGuest = guest;
-    if (!guest.invitationContent) {
-      const content = generateInvitation(guest);
-      dispatch({
-        type: 'UPDATE_INVITATION',
-        payload: {
-          guestId: guest.id,
-          content,
-          status: 'generated'
+  const handlePreviewInvitation = async (guest: GuestInfo) => {
+    try {
+      // 如果邀請函文字尚未生成，則使用 API 生成
+      if (!guest.invitationContent) {
+        setIsGenerating(true);
+        setError(null);
+        
+        try {
+          const response = await api.invitations.generate(guest.id);
+          dispatch({
+            type: 'UPDATE_INVITATION',
+            payload: {
+              guestId: guest.id,
+              content: response.data.invitationContent,
+              status: 'generated'
+            }
+          });
+          
+          // 更新當前賓客對象，包含新生成的內容
+          guest = {
+            ...guest,
+            invitationContent: response.data.invitationContent,
+            status: 'generated'
+          };
+        } catch (err) {
+          console.error('生成邀請函時出錯:', err);
+          // 如果 API 請求失敗，使用本地生成的文字作為備用
+          const fallbackContent = generateFallbackInvitation(guest);
+          dispatch({
+            type: 'UPDATE_INVITATION',
+            payload: {
+              guestId: guest.id,
+              content: fallbackContent,
+              status: 'generated'
+            }
+          });
+          
+          guest = {
+            ...guest,
+            invitationContent: fallbackContent,
+            status: 'generated'
+          };
         }
-      });
-      // 更新當前賓客對象，包含新生成的內容
-      currentGuest = {
-        ...guest,
-        invitationContent: content,
-        status: 'generated'
-      };
+      }
+      
+      setSelectedGuest(guest);
+      setEditMode(false);
+    } catch (error) {
+      console.error('處理邀請函預覽時出錯:', error);
+      setError('無法顯示邀請函預覽，請稍後再試。');
+    } finally {
+      setIsGenerating(false);
     }
-    setSelectedGuest(currentGuest);
-    setEditMode(false);
   };
   
   // 處理編輯模式切換
@@ -88,33 +150,41 @@ const PreviewPage: React.FC = () => {
   };
   
   // 處理保存編輯
-  const handleSaveInvitationFeedback = () => {
+  const handleSaveInvitationFeedback = async () => {
     if (selectedGuest && invitationFeedback.trim()) {
-      // 在實際應用中，這裡會發送反饋給AI並請求重新生成邀請函文字
-      // 現在我們只是模擬這個過程
-      
-      // 模擬AI根據反饋生成的新文字 (這裡簡單示範)
-      const newContent = `${selectedGuest.invitationContent}\n\n根據您的反饋，我們增加了這段個性化內容：\n${invitationFeedback}`;
-      
-      // 模擬更新文字內容
-      dispatch({
-        type: 'UPDATE_INVITATION',
-        payload: {
-          guestId: selectedGuest.id,
-          content: newContent,
+      try {
+        setIsGenerating(true);
+        setError(null);
+        
+        // 使用 API 更新邀請函文字
+        const updatedContent = `${selectedGuest.invitationContent}\n\n根據您的反饋，我們增加了這段個性化內容：\n${invitationFeedback}`;
+        await api.invitations.update(selectedGuest.id, updatedContent);
+        
+        // 更新 Redux 狀態
+        dispatch({
+          type: 'UPDATE_INVITATION',
+          payload: {
+            guestId: selectedGuest.id,
+            content: updatedContent,
+            status: 'edited'
+          }
+        });
+        
+        // 更新當前選中的賓客對象
+        setSelectedGuest({
+          ...selectedGuest,
+          invitationContent: updatedContent,
           status: 'edited'
-        }
-      });
-      
-      // 更新當前選中的賓客對象
-      setSelectedGuest({
-        ...selectedGuest,
-        invitationContent: newContent,
-        status: 'edited'
-      });
-      
-      alert('感謝您的反饋！已根據您的需求更新邀請函文字。');
-      setEditMode(false);
+        });
+        
+        alert('感謝您的反饋！已根據您的需求更新邀請函文字。');
+        setEditMode(false);
+      } catch (error) {
+        console.error('更新邀請函文字時出錯:', error);
+        setError('無法更新邀請函，請稍後再試。');
+      } finally {
+        setIsGenerating(false);
+      }
     }
   };
   
@@ -124,11 +194,25 @@ const PreviewPage: React.FC = () => {
   };
   
   // 處理刪除賓客
-  const handleDeleteGuest = (id: string) => {
+  const handleDeleteGuest = async (id: string) => {
     if (window.confirm('確定要刪除此賓客的邀請函？')) {
-      dispatch({ type: 'REMOVE_GUEST', payload: id });
-      if (selectedGuest && selectedGuest.id === id) {
-        setSelectedGuest(null);
+      try {
+        dispatch({ type: 'SET_LOADING', payload: true });
+        
+        // 呼叫 API 刪除賓客
+        await api.guests.delete(id);
+        
+        // 更新 Redux 狀態
+        dispatch({ type: 'REMOVE_GUEST', payload: id });
+        
+        if (selectedGuest && selectedGuest.id === id) {
+          setSelectedGuest(null);
+        }
+      } catch (error) {
+        console.error('刪除賓客時出錯:', error);
+        setError('無法刪除賓客，請稍後再試。');
+      } finally {
+        dispatch({ type: 'SET_LOADING', payload: false });
       }
     }
   };
@@ -208,6 +292,13 @@ const PreviewPage: React.FC = () => {
       {/* 進度指示器 */}
       <ProgressIndicator />
       
+      {/* 錯誤訊息顯示 */}
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
+      
       {/* 賓客邀請函網格 */}
       <div className="mt-8">
         <h2 className="text-xl font-medium mb-4 text-wedding-dark">賓客邀請函預覽</h2>
@@ -252,35 +343,44 @@ const PreviewPage: React.FC = () => {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-full">
-                    <span className="text-gray-400 mb-2">點擊生成邀請函</span>
-                    <button 
-                      className="px-4 py-1 bg-wedding-primary rounded-full text-xs"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePreviewInvitation(guest);
-                      }}
-                    >
-                      生成
-                    </button>
+                  <div className="flex flex-col items-center justify-center space-y-2">
+                    {isGenerating ? (
+                      <>
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-wedding-dark"></div>
+                        <p className="text-xs text-wedding-dark">正在生成邀請函...</p>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-10 h-10 text-wedding-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                        </svg>
+                        <p className="text-xs text-wedding-dark">點擊生成邀請函</p>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
               
+              {/* 狀態標籤 */}
               <div className="flex justify-between items-center">
-                <span className="text-xs text-gray-500">
-                  {guest.status === 'edited' ? '已自訂文字' : 
-                   guest.status === 'generated' ? '已生成文字' : 
-                   guest.status === 'sent' ? '已發送' : '待生成'}
+                <span className={`text-xs px-2 py-1 rounded ${
+                  guest.status === 'generated' ? 'bg-blue-100 text-blue-800' : 
+                  guest.status === 'edited' ? 'bg-purple-100 text-purple-800' :
+                  guest.status === 'sent' ? 'bg-green-100 text-green-800' : 
+                  'bg-gray-100 text-gray-800'
+                }`}>
+                  {guest.status === 'generated' ? '已生成' : 
+                   guest.status === 'edited' ? '已編輯' : 
+                   guest.status === 'sent' ? '已發送' : '未生成'}
                 </span>
                 <button 
-                  className="text-sm text-blue-500 hover:text-blue-700"
+                  className="text-xs text-wedding-accent hover:underline"
                   onClick={(e) => {
                     e.stopPropagation();
                     handlePreviewInvitation(guest);
                   }}
                 >
-                  {guest.invitationContent ? '查看預覽' : '生成邀請函'}
+                  查看邀請函
                 </button>
               </div>
             </motion.div>
@@ -305,125 +405,157 @@ const PreviewPage: React.FC = () => {
         </button>
       </div>
       
-      {/* 邀請函預覽模態框 - 毛玻璃效果 */}
+      {/* 預覽模態框 */}
       <AnimatePresence>
         {selectedGuest && (
-          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
-            {/* 毛玻璃背景 */}
-            <div 
-              className="absolute inset-0 backdrop-blur-md bg-black bg-opacity-30"
-              onClick={closeModal}
-            ></div>
-            
-            {/* 預覽模態框 */}
+          <motion.div
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={closeModal}
+          >
             <motion.div
-              className={`bg-white rounded-xl ${editMode ? 'max-w-3xl' : 'max-w-lg'} w-full z-10 overflow-hidden shadow-2xl flex ${editMode ? 'flex-row' : 'flex-col'}`}
+              className="bg-white w-full max-w-4xl rounded-xl shadow-xl overflow-hidden flex flex-col md:flex-row"
               variants={modalVariants}
               initial="hidden"
               animate="visible"
               exit="exit"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* 左側邀請函預覽區域 */}
-              <div className={`${editMode ? 'w-1/2' : 'w-full'}`}>
-                {/* 邀請函內容預覽 */}
-                <div className="relative">
-                  <div className="w-full aspect-[4/3] bg-wedding-secondary">
+              {/* 邀請函預覽區域 */}
+              <div className="md:w-3/5 p-6 bg-wedding-secondary relative">
+                <h3 className="text-xl font-medium mb-4 text-wedding-dark">給 {selectedGuest.name} 的邀請函</h3>
+                
+                {isGenerating ? (
+                  <div className="h-full flex flex-col items-center justify-center space-y-4">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-wedding-dark"></div>
+                    <p className="text-wedding-dark">正在處理邀請函，請稍候...</p>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-lg p-6 shadow-inner relative min-h-[400px]">
                     <img 
                       src={templateImage} 
                       alt="邀請函背景" 
-                      className="w-full h-full object-cover opacity-30" 
+                      className="absolute inset-0 w-full h-full object-cover opacity-30 rounded-lg" 
                     />
-                    <div className="absolute inset-0 flex items-center justify-center p-8">
-                      <div className="bg-white bg-opacity-70 p-6 rounded-lg w-full max-h-full overflow-y-auto">
-                        <p className="text-sm text-wedding-dark whitespace-pre-line">
-                          {selectedGuest.invitationContent}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* 賓客資訊和按鈕 - 僅在非編輯模式下顯示 */}
-                {!editMode && (
-                  <div className="p-6">
-                    <h3 className="text-xl font-medium mb-2 text-wedding-dark">
-                      {selectedGuest.name} 的邀請函
-                    </h3>
-                    <p className="text-xs text-gray-500 mb-6">
-                      {selectedGuest.relationship} | {selectedGuest.email}
-                    </p>
-                    
-                    {/* 按鈕區域 */}
-                    <div className="flex justify-end space-x-3">
-                      <button
-                        onClick={handleEditMode}
-                        className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                      >
-                        修改邀請函文字
-                      </button>
-                      <button
-                        onClick={closeModal}
-                        className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-                      >
-                        確認
-                      </button>
+                    <div className="relative z-10">
+                      <pre className="font-serif text-wedding-dark whitespace-pre-wrap">
+                        {selectedGuest.invitationContent}
+                      </pre>
                     </div>
                   </div>
                 )}
               </div>
               
-              {/* 右側編輯區域 - 僅在編輯模式下顯示 */}
-              {editMode && (
-                <motion.div 
-                  className="w-1/2 border-l border-gray-200 bg-gray-50"
-                  variants={sidebarVariants}
-                  initial="hidden"
-                  animate="visible"
-                  exit="exit"
-                >
-                  <div className="p-6">
-                    <h3 className="text-xl font-medium mb-4 text-wedding-dark">
-                      個性化邀請函文字
-                    </h3>
+              {/* 編輯區域 */}
+              <AnimatePresence mode="wait">
+                {editMode ? (
+                  <motion.div 
+                    className="md:w-2/5 p-6 bg-white"
+                    variants={sidebarVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    key="edit"
+                  >
+                    <h3 className="text-xl font-medium mb-4 text-wedding-dark">編輯邀請函</h3>
+                    <p className="text-sm text-gray-500 mb-4">請提供您希望修改的內容或特別要求</p>
                     
-                    <p className="text-sm text-gray-500 mb-4">
-                      為 <span className="font-medium">{selectedGuest.name}</span> 提供個性化邀請函文字建議
-                    </p>
-                    
-                    <div className="bg-white border border-gray-200 p-3 rounded-lg mb-4 text-sm max-h-36 overflow-y-auto">
-                      <p className="text-gray-700 whitespace-pre-line">
-                        {selectedGuest.invitationContent}
-                      </p>
-                    </div>
-                    
-                    <textarea
-                      className="w-full h-48 p-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-wedding-accent focus:border-transparent resize-none mb-4"
+                    <textarea 
+                      className="w-full h-48 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-wedding-accent"
+                      placeholder="例如：希望增加更多關於我們共同回憶的內容，或者調整稱呼方式..."
                       value={invitationFeedback}
                       onChange={(e) => setInvitationFeedback(e.target.value)}
-                      placeholder="請告訴我們您想要如何調整邀請函的文字內容？例如：語氣、用詞、增加特別的祝福語或提及特定回憶..."
-                    />
+                    ></textarea>
                     
-                    {/* 按鈕區域 */}
-                    <div className="flex justify-end space-x-3">
-                      <button
+                    <div className="flex space-x-4 mt-4">
+                      <button 
+                        className="btn-primary py-2"
+                        onClick={handleSaveInvitationFeedback}
+                        disabled={isGenerating || !invitationFeedback.trim()}
+                      >
+                        {isGenerating ? '處理中...' : '儲存修改'}
+                      </button>
+                      <button 
+                        className="btn-secondary py-2 bg-gray-500"
                         onClick={handleCancelEdit}
-                        className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
                       >
                         取消
                       </button>
-                      <button
-                        onClick={handleSaveInvitationFeedback}
-                        className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div 
+                    className="md:w-2/5 p-6 flex flex-col justify-between"
+                    variants={sidebarVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    key="info"
+                  >
+                    <div>
+                      <h3 className="text-xl font-medium mb-4 text-wedding-dark">賓客資訊</h3>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-medium text-wedding-dark">姓名</h4>
+                          <p>{selectedGuest.name}</p>
+                        </div>
+                        
+                        <div>
+                          <h4 className="font-medium text-wedding-dark">關係</h4>
+                          <p>{selectedGuest.relationship}</p>
+                        </div>
+                        
+                        <div>
+                          <h4 className="font-medium text-wedding-dark">電子郵件</h4>
+                          <p>{selectedGuest.email}</p>
+                        </div>
+                        
+                        {selectedGuest.phone && (
+                          <div>
+                            <h4 className="font-medium text-wedding-dark">電話</h4>
+                            <p>{selectedGuest.phone}</p>
+                          </div>
+                        )}
+                        
+                        {selectedGuest.howMet && (
+                          <div>
+                            <h4 className="font-medium text-wedding-dark">相識方式</h4>
+                            <p>{selectedGuest.howMet}</p>
+                          </div>
+                        )}
+                        
+                        {selectedGuest.memories && (
+                          <div>
+                            <h4 className="font-medium text-wedding-dark">共同回憶</h4>
+                            <p>{selectedGuest.memories}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="mt-6 space-y-4">
+                      <button 
+                        className="w-full btn-primary py-2"
+                        onClick={handleEditMode}
                       >
-                        重新生成文字
+                        編輯邀請函
+                      </button>
+                      
+                      <button 
+                        className="w-full btn-secondary py-2"
+                        onClick={closeModal}
+                      >
+                        關閉
                       </button>
                     </div>
-                  </div>
-                </motion.div>
-              )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
-          </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </motion.div>

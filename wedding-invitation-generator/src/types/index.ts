@@ -27,6 +27,7 @@ export interface GuestInfo {
   howMet?: string; // 如何認識
   memories?: string; // 共同的回憶
   email: string; // 電子郵件地址
+  phone?: string; // 電話號碼
   invitationContent?: string; // 生成的邀請函內容
   status?: 'pending' | 'generated' | 'edited' | 'sent'; // 邀請函狀態
 }
