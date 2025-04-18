@@ -1,0 +1,62 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model CoupleInfo {
+  id          String    @id @default(uuid())
+  groomName   String
+  brideName   String
+  weddingDate DateTime
+  weddingTime String
+  weddingLocation String
+  weddingTheme String
+  backgroundStory String?
+  guests      Guest[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Guest {
+  id           String    @id @default(uuid())
+  name         String
+  relationship String
+  email        String
+  preferences  String?
+  howMet       String?
+  memories     String?
+  status       String    // pending, generated, edited, sent
+  invitationContent String?
+  coupleInfo   CoupleInfo @relation(fields: [coupleInfoId], references: [id])
+  coupleInfoId String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// 日誌表用於追蹤系統操作
+model SystemLog {
+  id           String    @id @default(uuid())
+  level        String    // info, warn, error
+  message      String
+  metadata     String?   // JSON string
+  timestamp    DateTime  @default(now())
+}
+
+// API訪問日誌表
+model ApiAccessLog {
+  id           String    @id @default(uuid())
+  endpoint     String
+  method       String
+  statusCode   Int
+  responseTime Int       // ms
+  userIp       String?
+  userAgent    String?
+  timestamp    DateTime  @default(now())
+} 
