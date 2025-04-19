@@ -101,4 +101,39 @@ router.put('/:id', guestController.updateGuest);
  */
 router.delete('/:id', guestController.deleteGuest);
 
+/**
+ * Update Guest Status
+ * 
+ * PATCH /api/guests/:id/status
+ * 
+ * Updates the RSVP status of a guest (pending, confirmed, declined).
+ * This endpoint is typically called when a guest responds to an invitation.
+ * 
+ * Path parameters:
+ * - id: UUID of the guest to update
+ * 
+ * Request body must include:
+ * - status: New status (must be one of: 'pending', 'confirmed', 'declined')
+ * 
+ * Returns a 404 error if no guest with the given ID is found.
+ * Returns a 400 error if the status value is invalid.
+ */
+router.patch('/:id/status', guestController.updateGuestStatus);
+
+/**
+ * Bulk Import Guests
+ * 
+ * POST /api/guests/bulk
+ * 
+ * Imports multiple guests from a provided data array.
+ * Each guest must have the required fields and will be associated with the specified couple.
+ * 
+ * Request body must include:
+ * - guests: Array of guest objects to import (each with name, email, relationship)
+ * - coupleInfoId: UUID of the couple these guests are associated with
+ * 
+ * Returns a summary of the import operation, including counts of successful and failed imports.
+ */
+router.post('/bulk', guestController.bulkImportGuests);
+
 module.exports = router; 

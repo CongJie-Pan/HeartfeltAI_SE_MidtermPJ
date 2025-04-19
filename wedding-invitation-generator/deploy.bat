@@ -62,10 +62,29 @@ echo.
 REM 部署完成
 echo === 部署完成! ===
 echo.
-echo 啟動應用:
-echo 1. 後端目錄已是當前位置
-echo 2. 執行伺服器: npm start
-echo 3. 瀏覽器訪問: http://localhost:5000
+
+REM 啟動伺服器
+echo [步驟7] 啟動伺服器
+echo 正在啟動伺服器，請等待...
+start "Wedding Invitation Server" cmd /c "npm start"
+
+REM 等待伺服器啟動 (5秒)
+echo 等待伺服器啟動中...
+ping 127.0.0.1 -n 6 > nul
+
+REM 自動打開瀏覽器
+echo [步驟8] 打開應用程式
+start http://localhost:5000
+
+echo.
+echo 伺服器已啟動:
+echo 1. 後端伺服器正在運行
+echo 2. 瀏覽器已打開，訪問 http://localhost:5000
+echo 3. 若瀏覽器未打開，請手動訪問
+echo.
+echo 關閉伺服器:
+echo 1. 在命令視窗中按 Ctrl+C
+echo 2. 或關閉伺服器命令視窗
 echo.
 echo 生產環境部署:
 echo NODE_ENV=production npm start

@@ -19,6 +19,7 @@ import ProgressIndicator from '../components/ProgressIndicator';
 import { useWedding } from '../context/WeddingContext';
 import { CoupleInfo } from '../types';
 import api from '../services/api';
+import { AxiosError } from 'axios';
 
 /**
  * Validation schema for the couple information form
@@ -95,9 +96,47 @@ const CoupleInfoPage: React.FC = () => {
       
       // Proceed to next step in the workflow
       nextStep();
-    } catch (error) {
-      console.error('Error saving couple information:', error);
-      setSubmitError('無法保存資料，請稍後再試。');
+    } catch (error: unknown) {
+      // Get detailed error information
+      const axiosError = error as AxiosError<{message?: string, errorId?: string}>;
+      const errorDetails = {
+        message: axiosError.message || '未知錯誤',
+        status: axiosError.response?.status,
+        data: axiosError.response?.data,
+        network: axiosError.code === 'ERR_NETWORK'
+      };
+      
+      console.error('Error saving couple information:', errorDetails);
+      
+      // Set specific error message based on error type
+      if (errorDetails.network) {
+        setSubmitError('網路連接失敗，無法連接到伺服器。請檢查網路連接或確認伺服器是否運行。');
+      } else if (errorDetails.status === 400) {
+        // 400 Bad Request - Validation errors
+        const validationMessage = errorDetails.data?.message || '資料格式不正確，請檢查所有欄位。';
+        setSubmitError(`資料驗證失敗：${validationMessage}`);
+      } else if (errorDetails.status === 401 || errorDetails.status === 403) {
+        // 401/403 - Authentication/Authorization errors
+        setSubmitError('無權限執行此操作，請重新登入或聯絡管理員。');
+      } else if (errorDetails.status === 404) {
+        // 404 Not Found
+        setSubmitError('伺服器找不到請求的資源，請聯絡管理員。');
+      } else if (errorDetails.status === 500) {
+        // 500 Server Error
+        const serverMessage = errorDetails.data?.message || '伺服器內部錯誤';
+        const errorId = errorDetails.data?.errorId || '';
+        setSubmitError(`伺服器處理請求時發生錯誤${errorId ? ` (錯誤ID: ${errorId})` : ''}。請稍後再試或聯絡管理員。`);
+        
+        // Log additional details for server errors (these won't be shown to the user)
+        console.error('Server error details:', {
+          endpoint: '/api/couple',
+          errorMessage: serverMessage,
+          date: new Date().toISOString()
+        });
+      } else {
+        // Default error case
+        setSubmitError(`無法保存資料: ${errorDetails.message}。請查看控制台或日誌獲取更多信息。`);
+      }
     } finally {
       // Clear form submission state
       setSubmitting(false);
