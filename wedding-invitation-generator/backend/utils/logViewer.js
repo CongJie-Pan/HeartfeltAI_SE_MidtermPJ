@@ -21,13 +21,23 @@ const COMBINED_LOG = path.join(LOG_DIR, 'combined.log');
  * @returns {Promise<void>}
  */
 const extractSqlLogs = async (logPath = COMBINED_LOG, callback) => {
-  if (!fs.existsSync(logPath)) {
-    console.error(`Log file not found: ${logPath}`);
+  // Check if logs directory exists
+  const dirPath = path.dirname(logPath || COMBINED_LOG);
+  if (!fs.existsSync(dirPath)) {
+    console.error(`Logs directory not found: ${dirPath}`);
+    console.log(`Please create the directory or run the application to generate logs.`);
+    return;
+  }
+
+  // Check if log file exists
+  if (!fs.existsSync(logPath || COMBINED_LOG)) {
+    console.error(`Log file not found: ${logPath || COMBINED_LOG}`);
+    console.log(`Try running the server first to generate logs, or use --db option to generate sample logs.`);
     return;
   }
 
   // Create readline interface
-  const fileStream = fs.createReadStream(logPath);
+  const fileStream = fs.createReadStream(logPath || COMBINED_LOG);
   const rl = readline.createInterface({
     input: fileStream,
     crlfDelay: Infinity
@@ -41,6 +51,7 @@ const extractSqlLogs = async (logPath = COMBINED_LOG, callback) => {
       // Look for SQL-related logs
       if (
         (logEntry.message && logEntry.message.includes('SQL')) ||
+        (logEntry.message && logEntry.message.includes('Prisma Query')) ||
         (logEntry.query) ||
         (logEntry.params && logEntry.sql) ||
         (logEntry.metadata && logEntry.metadata.sql)
@@ -93,7 +104,7 @@ const printSqlLogs = async (logPath = COMBINED_LOG) => {
   });
   
   if (count === 0) {
-    console.log('No SQL logs found.');
+    console.log('No SQL logs found. Try using the --db option to generate sample logs.');
   } else {
     console.log(`\nTotal SQL logs found: ${count}`);
   }
@@ -107,6 +118,17 @@ const printSqlLogs = async (logPath = COMBINED_LOG) => {
  * @returns {Promise<string>} The path to the created file
  */
 const saveSqlLogs = async (outputPath = path.join(LOG_DIR, 'sql.log'), logPath = COMBINED_LOG) => {
+  // Ensure logs directory exists
+  if (!fs.existsSync(LOG_DIR)) {
+    try {
+      fs.mkdirSync(LOG_DIR, { recursive: true });
+      console.log(`Created logs directory at: ${LOG_DIR}`);
+    } catch (error) {
+      console.error(`Failed to create logs directory: ${error.message}`);
+      return null;
+    }
+  }
+
   const sqlLogs = [];
   
   await extractSqlLogs(logPath, (entry) => {
@@ -114,7 +136,7 @@ const saveSqlLogs = async (outputPath = path.join(LOG_DIR, 'sql.log'), logPath =
   });
   
   if (sqlLogs.length === 0) {
-    console.log('No SQL logs found to save.');
+    console.log('No SQL logs found to save. Try using the --db option to generate sample logs.');
     return null;
   }
   

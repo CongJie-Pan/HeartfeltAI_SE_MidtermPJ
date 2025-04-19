@@ -55,6 +55,8 @@ type ActionType =
  * @returns {WeddingAppState} New application state
  */
 const weddingReducer = (state: WeddingAppState, action: ActionType): WeddingAppState => {
+  let guestExists; // declare the variable before using it
+  
   switch (action.type) {
     case 'SET_STEP':
       // Update the current step
@@ -65,7 +67,16 @@ const weddingReducer = (state: WeddingAppState, action: ActionType): WeddingAppS
       return { ...state, coupleInfo: action.payload };
       
     case 'ADD_GUEST':
-      // Add a new guest to the array
+      // check if the guest already exists (based on ID)
+      guestExists = state.guests.some(guest => guest.id === action.payload.id);
+      
+      // if the guest already exists, skip the addition and return the current state
+      if (guestExists) {
+        console.log(`Guest with ID ${action.payload.id} already exists, skipping addition.`);
+        return state;
+      }
+      
+      // otherwise, add the new guest to the array
       return { 
         ...state, 
         guests: [...state.guests, action.payload] 

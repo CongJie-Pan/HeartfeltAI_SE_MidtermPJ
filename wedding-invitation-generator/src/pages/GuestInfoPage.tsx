@@ -84,12 +84,18 @@ const GuestInfoPage: React.FC = () => {
         
         const response = await api.guests.getAll();
         if (response.data && response.data.length > 0) {
-          // If guests exist in the backend, update the frontend state
+          // compare the guests in the existing state with the guests in the backend
+          // only add the guests that are not in the frontend state
+          const existingGuestIds = new Set(state.guests.map(guest => guest.id));
+          
           response.data.forEach((guest: GuestInfo) => {
-            dispatch({
-              type: 'ADD_GUEST',
-              payload: guest
-            });
+            // only add the guests that are not in the frontend state
+            if (!existingGuestIds.has(guest.id)) {
+              dispatch({
+                type: 'ADD_GUEST',
+                payload: guest
+              });
+            }
           });
         }
       } catch (err) {
@@ -101,7 +107,7 @@ const GuestInfoPage: React.FC = () => {
     };
     
     fetchGuests();
-  }, [dispatch]);
+  }, [dispatch, state.guests]); // 加入 state.guests 到依賴陣列可能會導致循環更新，但考慮到我們在內部做了檢查，這是安全的
   
   /**
    * Initial values for the guest form
