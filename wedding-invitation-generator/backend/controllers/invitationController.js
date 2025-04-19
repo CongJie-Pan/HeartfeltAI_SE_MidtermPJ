@@ -40,6 +40,7 @@ try {
   logger.error('Failed to initialize DeepSeek API', { error: error.message });
 }
 
+// Initialize Prisma client for database operations
 const prisma = new PrismaClient();
 
 /**
@@ -108,6 +109,7 @@ const exponentialBackoff = async (fn, maxRetries = 3) => {
       retries++;
       if (retries >= maxRetries) throw error;
       
+      // Calculate exponential delay - increases with each retry attempt
       const delay = Math.pow(2, retries) * 1000; // Exponential delay (1s, 2s, 4s...)
       logger.info(`Retry ${retries}/${maxRetries} after ${delay}ms`);
       await new Promise(resolve => setTimeout(resolve, delay));
@@ -136,6 +138,7 @@ exports.generateInvitation = async (req, res) => {
     const cacheKey = `invitation_${guestId}`;
     const cachedInvitation = invitationCache.get(cacheKey);
     
+    // Return cached invitation if available and not forcing regeneration
     if (cachedInvitation && force !== 'true') {
       logger.info('Using cached invitation', { guestId });
       return res.status(200).json({ 
@@ -145,12 +148,13 @@ exports.generateInvitation = async (req, res) => {
       });
     }
     
-    // Retrieve guest and couple information
+    // Retrieve guest and couple information from database
     const guest = await prisma.guest.findUnique({
       where: { id: guestId },
       include: { coupleInfo: true }
     });
     
+    // Handle case where guest ID doesn't exist
     if (!guest) {
       logger.warn('Guest not found for invitation generation', { guestId });
       return res.status(404).json({ message: '找不到此賓客' });
@@ -161,7 +165,7 @@ exports.generateInvitation = async (req, res) => {
       guestName: guest.name 
     });
     
-    // Build AI prompt
+    // Build AI prompt with guest and couple details
     const prompt = createInvitationPrompt(guest);
     
     // Record request start time (for performance monitoring)
@@ -171,7 +175,7 @@ exports.generateInvitation = async (req, res) => {
     
     // Check if API client is available
     if (!openai || !process.env.DEEPSEEK_API_KEY) {
-      // No API or key configured, return mock content
+      // No API or key configured, return mock content as fallback
       invitationContent = `尊敬的${guest.name}：
 
 值此人生重要時刻，${guest.coupleInfo.groomName}與${guest.coupleInfo.brideName}誠摯邀請您參加我們的婚禮。
@@ -186,8 +190,9 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
 
       logger.warn('Using mock invitation due to missing DeepSeek API configuration', { guestId });
     } else {
-      // Call DeepSeek API to generate invitation
+      // Call DeepSeek API to generate personalized invitation
       try {
+        // Define the API request function to be used with retry mechanism
         const completionFn = async () => {
           const completion = await openai.chat.completions.create({
             messages: [
@@ -203,9 +208,10 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
           return completion.choices[0].message.content;
         };
         
-        // Use retry mechanism for API calls
+        // Use retry mechanism for API calls to handle transient failures
         invitationContent = await exponentialBackoff(completionFn);
       } catch (error) {
+        // Handle AI service errors with appropriate client response
         logger.error('DeepSeek API error', { 
           error: error.message, 
           stack: error.stack 
@@ -218,19 +224,19 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
       }
     }
     
-    // Record AI request completion time
+    // Record AI request completion time for performance monitoring
     const aiResponseTime = Date.now() - startTime;
     
-    // Update guest database record
+    // Update guest database record with the generated invitation
     const updatedGuest = await prisma.guest.update({
       where: { id: guestId },
       data: {
         invitationContent,
-        status: 'generated'
+        status: 'generated' // Update status to reflect invitation generation
       }
     });
     
-    // Store in cache
+    // Store in cache for future quick retrieval
     invitationCache.set(cacheKey, invitationContent);
     
     logger.info('Invitation generated successfully', { 
@@ -239,18 +245,21 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
       contentLength: invitationContent.length
     });
     
+    // Return success response with generated content
     res.status(200).json({ 
       message: '邀請函生成成功',
       guest: updatedGuest,
       invitationContent
     });
   } catch (error) {
+    // Handle unexpected errors with detailed logging
     logger.error('Invitation generation failed', { 
       error: error.message,
       stack: error.stack,
       guestId: req.body.guestId
     });
     
+    // Return error response with limited details in production
     res.status(500).json({ 
       message: '伺服器錯誤', 
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -274,7 +283,7 @@ exports.updateInvitation = async (req, res) => {
     const { guestId } = req.params;
     const { invitationContent } = req.body;
     
-    // Verify guest exists
+    // Verify guest exists before attempting update
     const guest = await prisma.guest.findUnique({
       where: { id: guestId }
     });
@@ -284,32 +293,35 @@ exports.updateInvitation = async (req, res) => {
       return res.status(404).json({ message: '找不到此賓客' });
     }
     
-    // Update invitation
+    // Update invitation content in database
     const updatedGuest = await prisma.guest.update({
       where: { id: guestId },
       data: {
         invitationContent,
-        status: 'edited'
+        status: 'edited' // Mark as manually edited for tracking purposes
       }
     });
     
-    // Update cache
+    // Update cache to maintain consistency
     const cacheKey = `invitation_${guestId}`;
     invitationCache.set(cacheKey, invitationContent);
     
     logger.info('Invitation updated', { guestId });
     
+    // Return success response with updated guest data
     res.status(200).json({
       message: '邀請函已更新',
       guest: updatedGuest
     });
   } catch (error) {
+    // Handle unexpected errors with detailed logging
     logger.error('Update invitation error', { 
       error: error.message,
       stack: error.stack,
       guestId: req.params.guestId
     });
     
+    // Return error response with limited details in production
     res.status(500).json({ 
       message: '伺服器錯誤', 
       error: process.env.NODE_ENV === 'development' ? error.message : undefined

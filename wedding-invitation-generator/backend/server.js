@@ -80,13 +80,113 @@ try {
 try {
   // Check if routes are correctly defined before loading full app
   try {
-    const guestRoutes = require('./routes/guestRoutes');
-    const coupleRoutes = require('./routes/coupleRoutes');
-    const invitationRoutes = require('./routes/invitationRoutes');
-    const emailRoutes = require('./routes/emailRoutes');
-    const healthRoutes = require('./routes/healthRoutes');
+    logger.info('開始檢查路由模塊...');
     
-    logger.info('API路由模塊檢查成功');
+    // 逐一加載路由模塊，以便精確定位問題
+    try {
+      logger.info('檢查健康檢查路由模塊...');
+      const healthRoutes = require('./routes/healthRoutes');
+      logger.info('健康檢查路由模塊檢查成功');
+    } catch (err) {
+      logger.error('健康檢查路由模塊檢查失敗', { 
+        error: err.message, 
+        stack: err.stack,
+        failedAt: err.stack?.split('\n')[1]?.trim() || '無法確定失敗位置'
+      });
+      throw err;
+    }
+    
+    try {
+      logger.info('檢查新人資訊路由模塊...');
+      const coupleRoutes = require('./routes/coupleRoutes');
+      // 檢查路由定義是否有效
+      if (coupleRoutes.stack) {
+        coupleRoutes.stack.forEach((layer, index) => {
+          if (layer.route) {
+            logger.info(`路由 ${index}: ${layer.route.path}`);
+          }
+        });
+      }
+      logger.info('新人資訊路由模塊檢查成功');
+    } catch (err) {
+      logger.error('新人資訊路由模塊檢查失敗', { 
+        error: err.message, 
+        stack: err.stack,
+        failedAt: err.stack?.split('\n')[1]?.trim() || '無法確定失敗位置'
+      });
+      throw err;
+    }
+    
+    try {
+      logger.info('檢查賓客管理路由模塊...');
+      const guestRoutes = require('./routes/guestRoutes');
+      logger.info('賓客管理路由模塊檢查成功');
+    } catch (err) {
+      logger.error('賓客管理路由模塊檢查失敗', { 
+        error: err.message, 
+        stack: err.stack,
+        failedAt: err.stack?.split('\n')[1]?.trim() || '無法確定失敗位置'
+      });
+      throw err;
+    }
+    
+    try {
+      logger.info('檢查邀請函生成路由模塊...');
+      const invitationRoutes = require('./routes/invitationRoutes');
+      
+      // 檢查path-to-regexp可能導致的問題
+      logger.info('分析邀請函路由定義...');
+      if (invitationRoutes.stack) {
+        invitationRoutes.stack.forEach((layer, index) => {
+          if (layer.route) {
+            const routePath = layer.route.path;
+            logger.info(`路由路徑 ${index}: ${routePath}`);
+            
+            // 檢查路徑中的參數格式
+            if (routePath.includes(':')) {
+              const parts = routePath.split('/');
+              parts.forEach(part => {
+                if (part.startsWith(':')) {
+                  const paramName = part.substring(1);
+                  if (!paramName || paramName.length === 0) {
+                    logger.error(`發現無效的路由參數格式: '${routePath}'，參數名稱缺失`);
+                  } else if (!isValidParamName(paramName)) {
+                    logger.error(`發現無效的路由參數名稱: '${paramName}'，必須是有效的JavaScript識別符`);
+                  }
+                }
+              });
+            }
+          }
+        });
+      }
+      
+      logger.info('邀請函生成路由模塊檢查成功');
+    } catch (err) {
+      logger.error('邀請函生成路由模塊檢查失敗', { 
+        error: err.message, 
+        stack: err.stack,
+        failedAt: err.stack?.split('\n')[1]?.trim() || '無法確定失敗位置',
+        details: err.message.includes('path-to-regexp') 
+          ? '路由定義中可能有無效的參數格式，檢查所有路由參數是否命名正確' 
+          : undefined
+      });
+      throw err;
+    }
+    
+    try {
+      logger.info('檢查電子郵件路由模塊...');
+      const emailRoutes = require('./routes/emailRoutes');
+      logger.info('電子郵件路由模塊檢查成功');
+    } catch (err) {
+      logger.error('電子郵件路由模塊檢查失敗', { 
+        error: err.message, 
+        stack: err.stack,
+        failedAt: err.stack?.split('\n')[1]?.trim() || '無法確定失敗位置'
+      });
+      throw err;
+    }
+    
+    logger.info('所有API路由模塊檢查成功');
   } catch (routeErr) {
     logger.error('API路由模塊檢查失敗', { 
       error: routeErr.message, 
@@ -97,7 +197,44 @@ try {
         ? '路由定義中可能有無效的參數格式，檢查所有路由參數是否命名正確' 
         : undefined
     });
+    
+    // 如果錯誤與path-to-regexp相關，嘗試提供更具體的診斷
+    if (routeErr.message.includes('path-to-regexp')) {
+      try {
+        logger.info('嘗試診斷path-to-regexp錯誤...');
+        const errorMessage = routeErr.message;
+        const errorPosition = errorMessage.match(/at (\d+)/)?.[1] || '未知位置';
+        const possibleRoutes = scanRoutesForErrors();
+        
+        logger.error('疑似導致path-to-regexp錯誤的路由', {
+          errorPosition,
+          possibleRoutes,
+          suggestedFix: "確保所有路由參數都有有效的名稱，例如 ':id', ':userId' 等。不能只有冒號而沒有參數名稱。"
+        });
+      } catch (diagErr) {
+        logger.error('診斷path-to-regexp錯誤失敗', {
+          error: diagErr.message
+        });
+      }
+    }
+    
     throw routeErr; // Re-throw to be caught by outer try-catch
+  }
+  
+  // 輔助函數：檢查參數名是否為有效的JavaScript識別符
+  function isValidParamName(name) {
+    return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name);
+  }
+  
+  // 輔助函數：掃描路由文件尋找可能的錯誤
+  function scanRoutesForErrors() {
+    // 這裡在實際環境中可以實現更詳細的掃描邏輯
+    // 為了簡單起見，我們只返回一個建議
+    return [
+      "請檢查 invitationRoutes.js 中的路由定義，確保所有參數都有名稱 (例如 '/:guestId' 而不是 '/:')",
+      "請檢查 emailRoutes.js 中的路由定義，確保參數名稱是有效的JS識別符",
+      "如果發現格式不正確的參數如 '/:123'，請改為 '/:id123' 或其他有效名稱"
+    ];
   }
   
   // Check application dependencies first
@@ -121,6 +258,7 @@ try {
   }
   
   // Try to load the app module
+  logger.info('嘗試加載Express應用模塊...');
   app = require('./app');
   logger.info('Express應用模塊已加載');
   
@@ -164,7 +302,27 @@ try {
     diagnostics.moduleNotFound = missingModule;
     specificSuggestion = `缺少模組 '${missingModule}'，請執行 npm install ${missingModule}`;
   } else if (err.message.includes('path-to-regexp')) {
-    specificSuggestion = '檢查路由定義中的參數格式，特別是 /api/ 開頭的路由中使用的冒號參數';
+    // 提供更具體的path-to-regexp錯誤解決方案
+    const errorLine = err.message.match(/at (\d+)/)?.[1] || '未知行號';
+    const errorReason = err.message.split('\n')[0] || '';
+    
+    diagnostics.pathToRegexpError = {
+      errorLine,
+      errorReason
+    };
+    
+    specificSuggestion = `路由參數格式錯誤：${errorReason}。
+    
+解決方案：
+1. 檢查所有路由定義，確保每個冒號 (:) 後都有有效的參數名稱
+2. 參數名必須是有效的JavaScript識別符（字母、數字、下劃線，不能以數字開頭）
+3. 可能的錯誤位置在第 ${errorLine} 個字符處
+4. 如有需要使用特殊字符，請使用引號包裹，例如 :"my-param"
+
+常見問題：
+- 路由定義為 '/:' 卻沒有參數名稱
+- 使用了無效的參數名稱如 '/:-id' 或 '/:123'
+- 錯誤的參數格式，如多個冒號 '/::id'`;
   } else if (err.message.includes('app.use')) {
     specificSuggestion = '中間件註冊順序錯誤或中間件函數定義不正確';
   } else if (err.message.includes('Cannot read properties of undefined')) {
