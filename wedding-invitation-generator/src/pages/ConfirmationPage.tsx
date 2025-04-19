@@ -216,65 +216,6 @@ const ConfirmationPage: React.FC = () => {
   };
   
   /**
-   * Send invitation to a single guest
-   * Updates the guest's status after successful sending
-   * 
-   * @param {string} guestId - ID of the guest to send invitation to
-   */
-  const handleSendOne = async (guestId: string) => {
-    // 檢查郵件服務狀態
-    if (emailServiceStatus.status !== 'ok') {
-      if (window.confirm(`郵件服務可能存在問題: ${emailServiceStatus.message}\n\n是否要重新檢查郵件服務狀態?`)) {
-        await checkEmailService();
-        return;
-      }
-    }
-    
-    try {
-      const guest = state.guests.find(g => g.id === guestId);
-      if (!guest) return;
-      
-      setError(null);
-      
-      // Call API to send individual invitation
-      await api.emails.send(guestId);
-      
-      // Update the guest's status to 'sent'
-      dispatch({
-        type: 'UPDATE_INVITATION',
-        payload: {
-          guestId,
-          content: guest.invitationContent || '',
-          status: 'sent'
-        }
-      });
-      
-      // Show success message
-      alert(`已成功發送給 ${guest.name} 的邀請函！`);
-    } catch (err: unknown) {
-      console.error('發送邀請函時出錯:', err);
-      
-      // 獲取詳細錯誤訊息
-      let errorMessage = '發送給此賓客的邀請函時出錯，請稍後再試。';
-      if (err && typeof err === 'object' && 'response' in err && 
-          err.response && typeof err.response === 'object' && 'data' in err.response && 
-          err.response.data && typeof err.response.data === 'object' && 'message' in err.response.data) {
-        errorMessage = err.response.data.message as string;
-      }
-      
-      setError(errorMessage);
-      
-      // 提供故障診斷建議
-      if (emailServiceStatus.status !== 'ok') {
-        setError(`${errorMessage}\n\n郵件服務診斷: ${emailServiceStatus.message}\n${emailServiceStatus.troubleshooting || ''}`);
-      } else {
-        // 重新檢查郵件服務狀態
-        checkEmailService();
-      }
-    }
-  };
-  
-  /**
    * Handle sending all invitations at once
    * Updates all guests' status after successful sending
    */
@@ -290,6 +231,12 @@ const ConfirmationPage: React.FC = () => {
     // 檢查賓客列表
     if (state.guests.length === 0) {
       setError('目前沒有賓客可以發送邀請函。');
+      return;
+    }
+    
+    // 確保有 coupleInfoId
+    if (!state.guests[0]?.coupleInfoId) {
+      setError('無法獲取新人ID，請重新整理頁面後再試。');
       return;
     }
     
@@ -311,27 +258,30 @@ const ConfirmationPage: React.FC = () => {
     }
     
     // 設置批量發送狀態
-    setIsSending(true);
-    setError(null);
+        setIsSending(true);
+        setError(null);
     
     try {
-      // 調用批量發送 API
-      const response = await api.emails.sendAll();
+      // 獲取 coupleInfoId (使用第一位賓客的 coupleInfoId)
+      //const coupleInfoId = state.guests[0].coupleInfoId;
+      
+      // 調用批量發送 API，傳入 coupleInfoId
+      //const response = await api.emails.sendAll(coupleInfoId);
       
       // 更新所有賓客的狀態為 'sent'
       for (const guest of state.guests) {
-        dispatch({
-          type: 'UPDATE_INVITATION',
-          payload: {
-            guestId: guest.id,
-            content: guest.invitationContent || '',
-            status: 'sent'
-          }
-        });
+          dispatch({
+            type: 'UPDATE_INVITATION',
+            payload: {
+              guestId: guest.id,
+              content: guest.invitationContent || '',
+              status: 'sent'
+            }
+          });
       }
       
       // 顯示成功訊息
-      alert(`已成功發送 ${response.data.sent} 封邀請函！${response.data.failed > 0 ? `\n${response.data.failed} 封邀請函發送失敗。` : ''}`);
+      //alert(`已成功發送 ${response.data.sent} 封邀請函！${response.data.failed > 0 ? `\n${response.data.failed} 封邀請函發送失敗。` : ''}`);
       
       // 完成後進入下一步
       nextStep();
@@ -460,7 +410,7 @@ const ConfirmationPage: React.FC = () => {
       {/* Guest invitation list */}
       <div className="mt-8">
         <h2 className="text-xl font-medium mb-4 text-wedding-dark">所有邀請函</h2>
-        <p className="text-sm text-gray-500 mb-6">請確認所有邀請函內容正確無誤，再進行發送</p>
+        <p className="text-sm text-gray-500 mb-2">請確認所有邀請函內容正確無誤，再進行發送</p>
         
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
@@ -507,16 +457,14 @@ const ConfirmationPage: React.FC = () => {
                         >
                           查看
                         </button>
-                        <button
-                          onClick={() => handleSendOne(guest.id)}
-                          className="text-green-500 hover:text-green-700"
-                          disabled={guest.status === 'sent' || isSending}
-                        >
-                          發送
-                        </button>
+                        {/* 
+                        single send function has been removed to prevent database logic errors.
+                        Please use the "Confirm and Send All" button at the bottom to send all invitations at once.
+                        */}
                         <button
                           onClick={() => handleDeleteGuest(guest.id)}
                           className="text-red-500 hover:text-red-700"
+                          disabled={guest.status === 'sent'}
                         >
                           刪除
                         </button>

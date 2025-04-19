@@ -20,6 +20,12 @@ const logger = require('../config/logger');
  * If validation passes, it allows the request to continue to the next middleware.
  * If validation fails, it logs the errors and returns a 400 Bad Request response.
  * 
+ * The enhanced error logging provides detailed debug information including:
+ * - Complete validation error details
+ * - Request context information
+ * - Data tracing for each validation error
+ * - Formatted validation path for easier troubleshooting
+ * 
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  * @param {Function} next - Express next middleware function
@@ -28,21 +34,235 @@ const logger = require('../config/logger');
 const handleValidation = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    logger.warn('Validation error', {
-      errors: errors.array(),
-      body: req.body,
+    // Generate a unique error reference ID for tracking
+    const errorRefId = generateErrorReference();
+    
+    // Create formatted errors with more detailed information
+    const formattedErrors = errors.array().map((error, index) => {
+      // Extract the relevant data for the error from the request
+      const relevantData = extractRelevantData(req, error);
+      
+      // Create a structured error object with enhanced debug info
+      return {
+        index,
+        field: error.param,
+        location: error.location,
+        value: error.value,
+        message: error.msg,
+        type: error.type,
+        // Formatted path for nested fields (e.g., user.address.city)
+        path: formatValidationPath(error),
+        // Actual vs expected data comparison
+        valueAnalysis: analyzeInvalidValue(error)
+      };
+    });
+    
+    // Gather complete request context for debugging
+    const requestContext = {
       path: req.path,
       method: req.method,
-      ip: req.ip
+      query: req.query,
+      params: req.params,
+      body: sanitizeRequestBody(req.body), // Remove sensitive data
+      headers: sanitizeHeaders(req.headers), // Remove auth tokens
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      timestamp: new Date().toISOString(),
+      referer: req.get('Referer') || null,
+      contentType: req.get('Content-Type'),
+      sessionInfo: req.session ? { id: req.session.id } : null,
+      referenceId: errorRefId
+    };
+    
+    // Log detailed validation error with complete context
+    logger.warn('Validation error detected', {
+      errorRefId,
+      errorCount: formattedErrors.length,
+      endpointInfo: `${req.method} ${req.path}`,
+      validationErrors: formattedErrors,
+      requestContext,
+      // Stack trace for debugging where validation was triggered
+      stackTrace: new Error().stack
     });
+    
+    // Additional detailed debug logging for each error
+    formattedErrors.forEach(error => {
+      logger.debug(`Validation error details [${errorRefId}]`, {
+        fieldPath: error.path,
+        errorMessage: error.message,
+        receivedValue: error.value,
+        validationType: error.type,
+        errorContext: error.valueAnalysis
+      });
+    });
+    
+    // Create user-friendly error messages
+    const userErrors = errors.array().map(error => ({
+      field: error.param,
+      message: error.msg
+    }));
     
     return res.status(400).json({
       message: '輸入資料有誤',
-      errors: errors.array()
+      errors: userErrors,
+      referenceId: errorRefId // Include reference ID for support inquiries
     });
   }
   next();
 };
+
+/**
+ * Generates a unique error reference ID for tracking
+ * 
+ * @returns {string} Unique error reference ID
+ */
+function generateErrorReference() {
+  return `VAL-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`.toUpperCase();
+}
+
+/**
+ * Formats validation path for nested fields
+ * Helps identify the exact location of validation errors in complex objects
+ * 
+ * @param {Object} error - Validation error object
+ * @returns {string} Formatted path
+ */
+function formatValidationPath(error) {
+  if (error.nestedErrors && error.nestedErrors.length > 0) {
+    return `${error.param}.${error.nestedErrors[0].param}`;
+  }
+  return error.param;
+}
+
+/**
+ * Extracts relevant data for the error from the request
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} error - Validation error object
+ * @returns {Object} Relevant data for the error
+ */
+function extractRelevantData(req, error) {
+  // Get data from the appropriate location (body, params, query, etc.)
+  const location = error.location || 'body';
+  let data = {};
+  
+  if (location === 'body' && req.body) {
+    data = req.body;
+  } else if (location === 'params' && req.params) {
+    data = req.params;
+  } else if (location === 'query' && req.query) {
+    data = req.query;
+  } else if (location === 'headers' && req.headers) {
+    data = req.headers;
+  }
+  
+  return data;
+}
+
+/**
+ * Analyzes invalid values to provide more context
+ * Provides information about what was expected vs. what was received
+ * 
+ * @param {Object} error - Validation error object
+ * @returns {Object} Analysis of the invalid value
+ */
+function analyzeInvalidValue(error) {
+  let analysis = {
+    received: error.value,
+    expectedType: 'valid value'
+  };
+  
+  // Try to determine what type was expected based on the validation error
+  if (error.type === 'field') {
+    if (error.msg.includes('empty')) {
+      analysis.expectedType = 'non-empty string';
+      analysis.issue = 'empty value';
+    } else if (error.msg.includes('email')) {
+      analysis.expectedType = 'valid email format';
+      analysis.issue = 'invalid email format';
+    } else if (error.msg.includes('UUID')) {
+      analysis.expectedType = 'valid UUID';
+      analysis.issue = 'invalid UUID format';
+    } else if (error.msg.includes('格式不正確') || error.msg.includes('format')) {
+      analysis.expectedType = 'correctly formatted value';
+      analysis.issue = 'format error';
+    }
+  }
+  
+  // Include data type information
+  analysis.receivedType = typeof error.value;
+  
+  return analysis;
+}
+
+/**
+ * Sanitizes request body to remove sensitive data
+ * 
+ * @param {Object} body - Request body
+ * @returns {Object} Sanitized body
+ */
+function sanitizeRequestBody(body) {
+  if (!body) return {};
+  
+  // Create a deep copy to avoid modifying the original
+  const sanitized = JSON.parse(JSON.stringify(body));
+  
+  // List of fields to redact
+  const sensitiveFields = ['password', 'token', 'secret', 'credential', 'apiKey', 'credit_card'];
+  
+  // Recursive function to sanitize nested objects
+  function sanitizeObject(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    
+    Object.keys(obj).forEach(key => {
+      const lowerKey = key.toLowerCase();
+      
+      // Check if the field name contains any sensitive keywords
+      if (sensitiveFields.some(field => lowerKey.includes(field))) {
+        obj[key] = '[REDACTED]';
+      } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+        // Recursively sanitize nested objects
+        sanitizeObject(obj[key]);
+      }
+    });
+    
+    return obj;
+  }
+  
+  return sanitizeObject(sanitized);
+}
+
+/**
+ * Sanitizes request headers to remove sensitive data
+ * 
+ * @param {Object} headers - Request headers
+ * @returns {Object} Sanitized headers
+ */
+function sanitizeHeaders(headers) {
+  if (!headers) return {};
+  
+  // Create a copy to avoid modifying the original
+  const sanitized = { ...headers };
+  
+  // List of headers to redact
+  const sensitiveHeaders = [
+    'authorization',
+    'cookie',
+    'x-api-key',
+    'proxy-authorization',
+    'x-csrf-token'
+  ];
+  
+  // Redact sensitive headers
+  Object.keys(sanitized).forEach(key => {
+    const lowerKey = key.toLowerCase();
+    if (sensitiveHeaders.includes(lowerKey)) {
+      sanitized[key] = '[REDACTED]';
+    }
+  });
+  
+  return sanitized;
+}
 
 /**
  * Validation Schemas

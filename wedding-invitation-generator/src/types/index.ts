@@ -55,6 +55,7 @@ export interface GuestInfo {
   phone?: string;                // Phone number (optional)
   invitationContent?: string;    // Generated invitation text
   status?: 'pending' | 'generated' | 'edited' | 'sent'; // Current status of invitation
+  coupleInfoId: string;          // Foreign key reference to the couple
 }
 
 /**

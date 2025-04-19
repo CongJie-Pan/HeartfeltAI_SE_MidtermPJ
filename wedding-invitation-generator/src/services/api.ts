@@ -109,7 +109,8 @@ export const api = {
    */
   emails: {
     // Send all pending invitations at once
-    sendAll: () => apiClient.post('/emails/send'),
+    // Requires coupleInfoId to identify which couple's guests to send invitations to
+    sendAll: (coupleInfoId: string) => apiClient.post('/emails/send', { coupleInfoId }),
     // Send invitation to a specific guest
     send: (guestId: string) => apiClient.post(`/emails/send/${guestId}`),
   },
