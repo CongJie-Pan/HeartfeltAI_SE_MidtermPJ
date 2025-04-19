@@ -202,7 +202,7 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
               },
               { role: "user", content: prompt }
             ],
-            model: "deepseek-chat",
+            model: "deepseek-reasoner", // use the reasoner model for better performance
           });
           
           return completion.choices[0].message.content;
@@ -281,11 +281,12 @@ ${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
 exports.updateInvitation = async (req, res) => {
   try {
     const { guestId } = req.params;
-    const { invitationContent } = req.body;
+    const { invitationContent, feedbackText } = req.body;
     
     // Verify guest exists before attempting update
     const guest = await prisma.guest.findUnique({
-      where: { id: guestId }
+      where: { id: guestId },
+      include: { coupleInfo: true }
     });
     
     if (!guest) {
@@ -293,18 +294,81 @@ exports.updateInvitation = async (req, res) => {
       return res.status(404).json({ message: '找不到此賓客' });
     }
     
+    let updatedContent = invitationContent;
+    
+    // If feedback is provided and AI API is available, regenerate invitation using feedback
+    if (feedbackText && openai && process.env.DEEPSEEK_API_KEY) {
+      try {
+        logger.info('Regenerating invitation with user feedback', { guestId, feedbackLength: feedbackText.length });
+        
+        // Construct a prompt that incorporates the feedback
+        const feedbackPrompt = `
+請幫我根據以下的反饋，重新編寫婚禮邀請函。
+
+原始邀請函:
+${invitationContent}
+
+賓客資料:
+- 姓名: ${guest.name}
+- 與新人關係: ${guest.relationship}
+${guest.preferences ? `- 賓客偏好: ${guest.preferences}` : ''}
+${guest.howMet ? `- 相識方式: ${guest.howMet}` : ''}
+${guest.memories ? `- 共同回憶: ${guest.memories}` : ''}
+
+用戶反饋:
+${feedbackText}
+
+請根據反饋重新製作一封邀請函，著重地融合原邀請函和反饋中提及的內容和要求，而不是附加在末尾。
+保持原邀請函的溫暖、優雅風格。請直接提供完整邀請函內容，不要包含任何其他解釋或前後文。
+`;
+
+        // Record request start time for performance monitoring
+        const startTime = Date.now();
+        
+        // Call DeepSeek API to regenerate invitation incorporating feedback
+        const completion = await openai.chat.completions.create({
+          messages: [
+            { 
+              role: "system", 
+              content: "你是一個幫助撰寫婚禮邀請函的專業助手。請根據提供的新人和賓客資訊，生成一封個性化、溫馨且符合關係的邀請函。" 
+            },
+            { role: "user", content: feedbackPrompt }
+          ],
+          model: "deepseek-chat",
+        });
+        
+        // Get the regenerated invitation content
+        updatedContent = completion.choices[0].message.content;
+        
+        // Record AI request completion time for performance monitoring
+        const aiResponseTime = Date.now() - startTime;
+        logger.info('Invitation regenerated with feedback', { 
+          guestId,
+          responseTime: aiResponseTime,
+          contentLength: updatedContent.length
+        });
+      } catch (error) {
+        // Log error but continue with manual update as fallback
+        logger.error('Error regenerating invitation with AI, using manual update instead', { 
+          error: error.message, 
+          guestId,
+          feedbackText 
+        });
+      }
+    }
+    
     // Update invitation content in database
     const updatedGuest = await prisma.guest.update({
       where: { id: guestId },
       data: {
-        invitationContent,
+        invitationContent: updatedContent,
         status: 'edited' // Mark as manually edited for tracking purposes
       }
     });
     
     // Update cache to maintain consistency
     const cacheKey = `invitation_${guestId}`;
-    invitationCache.set(cacheKey, invitationContent);
+    invitationCache.set(cacheKey, updatedContent);
     
     logger.info('Invitation updated', { guestId });
     

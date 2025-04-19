@@ -14,12 +14,22 @@
  * 
  * This component uses Framer Motion for animations and modal transitions.
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProgressIndicator from '../components/ProgressIndicator';
 import { useWedding } from '../context/WeddingContext';
 import { GuestInfo } from '../types';
 import api from '../services/api';
+
+/**
+ * 驗證電子郵件格式是否有效
+ * @param email 需要驗證的電子郵件地址
+ * @returns 是否有效
+ */
+const validateEmail = (email: string): boolean => {
+  const re = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+  return re.test(String(email).toLowerCase());
+};
 
 /**
  * ConfirmationPage Component
@@ -36,9 +46,68 @@ const ConfirmationPage: React.FC = () => {
   const [selectedGuest, setSelectedGuest] = useState<GuestInfo | null>(null);  // Currently selected guest for preview/edit
   const [editContent, setEditContent] = useState('');                          // Editable invitation content
   const [editMode, setEditMode] = useState(false);                             // Whether edit mode is active
-  const [isSending, setIsSending] = useState(false);                           // Loading state for sending process
-  const [sentCount, setSentCount] = useState(0);                               // Counter for sent invitations
+  const [isSending, setIsSending] = useState<boolean>(false);                           // Loading state for sending process
   const [error, setError] = useState<string | null>(null);                     // Error message if any
+  const [emailServiceStatus, setEmailServiceStatus] = useState<{              // Email service status
+    status: 'pending' | 'ok' | 'error' | 'checking',
+    message: string,
+    troubleshooting?: string
+  }>({
+    status: 'pending',
+    message: '正在檢查郵件服務狀態...'
+  });
+  
+  // Check email service status on component mount
+  useEffect(() => {
+    checkEmailService();
+  }, []);
+  
+  /**
+   * Check email service status
+   * Calls the email health check API to verify email service configuration
+   */
+  const checkEmailService = async () => {
+    // 將狀態設置為"檢查中"
+    setEmailServiceStatus({
+      status: 'checking',
+      message: '正在檢查郵件服務狀態...'
+    });
+    
+    try {
+      const response = await api.health.email();
+      const data = response.data;
+      
+      if (data.status === 'ok') {
+        setEmailServiceStatus({
+          status: 'ok',
+          message: '郵件服務正常運行中',
+          troubleshooting: ''
+        });
+      } else {
+        let troubleshooting = '';
+        if (data.troubleshooting) {
+          troubleshooting = data.troubleshooting;
+        } else if (!data.configuration.complete) {
+          troubleshooting = '郵件服務配置不完整，請聯絡系統管理員設置 SMTP 郵件服務';
+        } else if (data.connection?.status === 'error') {
+          troubleshooting = `連接錯誤: ${data.connection.error}`;
+        }
+        
+        setEmailServiceStatus({
+          status: 'error',
+          message: data.message || '郵件服務配置有誤',
+          troubleshooting
+        });
+      }
+    } catch (err: unknown) {
+      console.error('檢查郵件服務狀態時出錯:', err);
+      setEmailServiceStatus({
+        status: 'error',
+        message: '無法檢查郵件服務狀態',
+        troubleshooting: '請確保伺服器正在運行，並檢查網絡連接'
+      });
+    }
+  };
 
   /**
    * Delete a guest and their invitation
@@ -107,7 +176,7 @@ const ConfirmationPage: React.FC = () => {
         setError(null);
         
         // Call API to update the invitation content
-        await api.invitations.update(selectedGuest.id, editContent);
+        await api.invitations.update(selectedGuest.id, editContent, '');
         
         // Update application state with new content
         dispatch({
@@ -118,6 +187,16 @@ const ConfirmationPage: React.FC = () => {
             status: 'edited'
           }
         });
+        
+        // Update the selectedGuest state to reflect the changes
+        setSelectedGuest({
+          ...selectedGuest,
+          invitationContent: editContent,
+          status: 'edited'
+        });
+        
+        // Show success message
+        alert('邀請函已成功更新！');
         
         // Exit edit mode after saving
         setEditMode(false);
@@ -137,61 +216,20 @@ const ConfirmationPage: React.FC = () => {
   };
   
   /**
-   * Send all invitations in batch
-   * Confirms with the user before starting the sending process
-   * Updates progress in real-time
-   */
-  const handleSendAll = async () => {
-    if (window.confirm(`確定要發送${state.guests.length}份邀請函嗎？`)) {
-      try {
-        setIsSending(true);
-        setError(null);
-        setSentCount(0);
-        
-        // Call API to send all invitations
-        await api.emails.sendAll();
-        
-        // Update the status of each guest in sequence
-        // In a real implementation, this might be handled by websockets
-        // or polling to get updates from the server
-        for (let i = 0; i < state.guests.length; i++) {
-          const guest = state.guests[i];
-          
-          // Update the current guest's status to 'sent'
-          dispatch({
-            type: 'UPDATE_INVITATION',
-            payload: {
-              guestId: guest.id,
-              content: guest.invitationContent || '',
-              status: 'sent'
-            }
-          });
-          
-          // Increment the sent counter
-          setSentCount(i + 1);
-          
-          // Add a slight delay between updates for visual feedback
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-        
-        // Move to the complete page after all invitations are sent
-        nextStep();
-      } catch (error) {
-        console.error('發送邀請函時出錯:', error);
-        setError('發送邀請函時出錯，請稍後再試。');
-      } finally {
-        setIsSending(false);
-      }
-    }
-  };
-  
-  /**
    * Send invitation to a single guest
    * Updates the guest's status after successful sending
    * 
    * @param {string} guestId - ID of the guest to send invitation to
    */
   const handleSendOne = async (guestId: string) => {
+    // 檢查郵件服務狀態
+    if (emailServiceStatus.status !== 'ok') {
+      if (window.confirm(`郵件服務可能存在問題: ${emailServiceStatus.message}\n\n是否要重新檢查郵件服務狀態?`)) {
+        await checkEmailService();
+        return;
+      }
+    }
+    
     try {
       const guest = state.guests.find(g => g.id === guestId);
       if (!guest) return;
@@ -213,9 +251,112 @@ const ConfirmationPage: React.FC = () => {
       
       // Show success message
       alert(`已成功發送給 ${guest.name} 的邀請函！`);
-    } catch (error) {
-      console.error('發送邀請函時出錯:', error);
-      setError(`發送給此賓客的邀請函時出錯，請稍後再試。`);
+    } catch (err: unknown) {
+      console.error('發送邀請函時出錯:', err);
+      
+      // 獲取詳細錯誤訊息
+      let errorMessage = '發送給此賓客的邀請函時出錯，請稍後再試。';
+      if (err && typeof err === 'object' && 'response' in err && 
+          err.response && typeof err.response === 'object' && 'data' in err.response && 
+          err.response.data && typeof err.response.data === 'object' && 'message' in err.response.data) {
+        errorMessage = err.response.data.message as string;
+      }
+      
+      setError(errorMessage);
+      
+      // 提供故障診斷建議
+      if (emailServiceStatus.status !== 'ok') {
+        setError(`${errorMessage}\n\n郵件服務診斷: ${emailServiceStatus.message}\n${emailServiceStatus.troubleshooting || ''}`);
+      } else {
+        // 重新檢查郵件服務狀態
+        checkEmailService();
+      }
+    }
+  };
+  
+  /**
+   * Handle sending all invitations at once
+   * Updates all guests' status after successful sending
+   */
+  const handleSendAll = async () => {
+    // 檢查郵件服務狀態
+    if (emailServiceStatus.status !== 'ok') {
+      if (window.confirm(`郵件服務可能存在問題: ${emailServiceStatus.message}\n\n是否要重新檢查郵件服務狀態?`)) {
+        await checkEmailService();
+        return;
+      }
+    }
+    
+    // 檢查賓客列表
+    if (state.guests.length === 0) {
+      setError('目前沒有賓客可以發送邀請函。');
+      return;
+    }
+    
+    // 確認是否要批量發送
+    if (!window.confirm(`確定要一次性發送給所有 ${state.guests.length} 位賓客嗎？`)) {
+      return;
+    }
+    
+    // 過濾出具有有效電子郵件地址的賓客
+    const validGuests = state.guests.filter(g => g.email && validateEmail(g.email));
+    if (validGuests.length < state.guests.length) {
+      if (!window.confirm(`有 ${state.guests.length - validGuests.length} 位賓客沒有有效的電子郵件地址。確定只發送給有效電子郵件地址的賓客嗎？`)) {
+        return;
+      }
+      if (validGuests.length === 0) {
+        setError('沒有賓客擁有有效的電子郵件地址！');
+        return;
+      }
+    }
+    
+    // 設置批量發送狀態
+    setIsSending(true);
+    setError(null);
+    
+    try {
+      // 調用批量發送 API
+      const response = await api.emails.sendAll();
+      
+      // 更新所有賓客的狀態為 'sent'
+      for (const guest of state.guests) {
+        dispatch({
+          type: 'UPDATE_INVITATION',
+          payload: {
+            guestId: guest.id,
+            content: guest.invitationContent || '',
+            status: 'sent'
+          }
+        });
+      }
+      
+      // 顯示成功訊息
+      alert(`已成功發送 ${response.data.sent} 封邀請函！${response.data.failed > 0 ? `\n${response.data.failed} 封邀請函發送失敗。` : ''}`);
+      
+      // 完成後進入下一步
+      nextStep();
+    } catch (err: unknown) {
+      console.error('批量發送邀請函時出錯:', err);
+      
+      // 獲取詳細錯誤訊息
+      let errorMessage = '批量發送邀請函時出錯，請稍後再試。';
+      if (err && typeof err === 'object' && 'response' in err && 
+          err.response && typeof err.response === 'object' && 'data' in err.response && 
+          err.response.data && typeof err.response.data === 'object' && 'message' in err.response.data) {
+        errorMessage = err.response.data.message as string;
+      }
+      
+      setError(errorMessage);
+      
+      // 提供故障診斷建議
+      if (emailServiceStatus.status !== 'ok') {
+        setError(`${errorMessage}\n\n郵件服務診斷: ${emailServiceStatus.message}\n${emailServiceStatus.troubleshooting || ''}`);
+      } else {
+        // 重新檢查郵件服務狀態
+        checkEmailService();
+      }
+    } finally {
+      setIsSending(false);
     }
   };
   
@@ -279,9 +420,39 @@ const ConfirmationPage: React.FC = () => {
       {/* Progress indicator to show current step */}
       <ProgressIndicator />
       
+      {/* Email service status indicator */}
+      <div className={`mb-4 p-4 rounded-lg ${
+        emailServiceStatus.status === 'ok' ? 'bg-green-100 text-green-800' :
+        emailServiceStatus.status === 'error' ? 'bg-red-100 text-red-800' :
+        'bg-blue-100 text-blue-800'
+      }`}>
+        <div className="flex items-center">
+          <div className={`w-3 h-3 rounded-full mr-2 ${
+            emailServiceStatus.status === 'ok' ? 'bg-green-500' :
+            emailServiceStatus.status === 'error' ? 'bg-red-500' :
+            'bg-blue-500'
+          }`}></div>
+          <div className="font-medium">郵件服務狀態: {
+            emailServiceStatus.status === 'ok' ? '正常' :
+            emailServiceStatus.status === 'error' ? '異常' :
+            '檢查中'
+          }</div>
+          <button 
+            className="ml-2 px-2 py-1 text-xs rounded hover:bg-opacity-80 bg-white bg-opacity-50"
+            onClick={checkEmailService}
+          >
+            重新檢查
+          </button>
+        </div>
+        <p className="mt-1">{emailServiceStatus.message}</p>
+        {emailServiceStatus.troubleshooting && (
+          <p className="mt-1 text-sm">{emailServiceStatus.troubleshooting}</p>
+        )}
+      </div>
+      
       {/* Error message display */}
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 whitespace-pre-line">
           {error}
         </div>
       )}
@@ -381,7 +552,7 @@ const ConfirmationPage: React.FC = () => {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              發送中 ({sentCount}/{state.guests.length})
+              發送中
             </>
           ) : (
             '確認並發送全部'

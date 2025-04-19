@@ -211,7 +211,7 @@ const PreviewPage: React.FC = () => {
    * Save edited invitation content
    * 
    * Processes user feedback to update the invitation content
-   * by appending customization notes
+   * by sending it to the backend for AI regeneration
    */
   const handleSaveInvitationFeedback = async () => {
     if (selectedGuest && invitationFeedback.trim()) {
@@ -219,28 +219,32 @@ const PreviewPage: React.FC = () => {
         setIsGenerating(true);
         setError(null);
         
-        // Create updated content by appending user feedback
-        const updatedContent = `${selectedGuest.invitationContent}\n\n根據您的反饋，我們增加了這段個性化內容：\n${invitationFeedback}`;
-        
-        // Call API to update invitation
-        await api.invitations.update(selectedGuest.id, updatedContent);
-        
-        // Update state with edited content
-        dispatch({
-          type: 'UPDATE_INVITATION',
-          payload: {
-            guestId: selectedGuest.id,
-            content: updatedContent,
+        // Call API to update invitation with feedback text
+        await api.invitations.update(selectedGuest.id, selectedGuest.invitationContent || '', invitationFeedback || '');        
+        // Fetch the updated invitation after regeneration
+        try {
+          const response = await api.invitations.generate(selectedGuest.id, true);
+          
+          // Update state with regenerated content
+          dispatch({
+            type: 'UPDATE_INVITATION',
+            payload: {
+              guestId: selectedGuest.id,
+              content: response.data.invitationContent,
+              status: 'edited'
+            }
+          });
+          
+          // Update selected guest with new content
+          setSelectedGuest({
+            ...selectedGuest,
+            invitationContent: response.data.invitationContent,
             status: 'edited'
-          }
-        });
-        
-        // Update selected guest with new content
-        setSelectedGuest({
-          ...selectedGuest,
-          invitationContent: updatedContent,
-          status: 'edited'
-        });
+          });
+        } catch (fetchError) {
+          console.error('Error fetching updated invitation:', fetchError);
+          setError('無法取得更新後的邀請函，請稍後再嘗試。');
+        }
         
         // Show success message and exit edit mode
         alert('感謝您的反饋！已根據您的需求更新邀請函文字。');

@@ -56,6 +56,8 @@ export const api = {
     check: () => apiClient.get('/health'),
     // Detailed health check with system information
     detailed: () => apiClient.get('/health/detailed'),
+    // Email service health check
+    email: () => apiClient.get('/health/email')
   },
   
   /**
@@ -96,8 +98,9 @@ export const api = {
     generate: (guestId: string, force = false) => 
       apiClient.post('/invitations/generate', { guestId }, { params: { force } }),
     // Update the content of an existing invitation
-    update: (guestId: string, invitationContent: string) => 
-      apiClient.put(`/invitations/${guestId}`, { invitationContent }),
+    // Optional feedbackText can be provided to guide AI regeneration
+    update: (guestId: string, invitationContent: string, feedbackText?: string) => 
+      apiClient.put(`/invitations/${guestId}`, { invitationContent, feedbackText }),
   },
   
   /**
