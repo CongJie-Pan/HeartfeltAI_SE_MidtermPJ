@@ -116,7 +116,7 @@ const PreviewPage: React.FC = () => {
       
       // 檢查回應數據結構
       if (!response.data || !response.data.invitation) {
-        console.error(`DeepSeek API 回應格式不正確，可能與資料庫結構不匹配`, {
+        console.error(`OpenAI API 回應格式不正確，可能與資料庫結構不匹配`, {
           guestId: guest.id,
           guestName: guest.name,
           responseData: JSON.stringify(response.data)

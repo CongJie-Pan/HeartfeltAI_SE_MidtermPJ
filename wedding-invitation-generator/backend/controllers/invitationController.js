@@ -6,13 +6,13 @@
  * - Updating invitation content
  * - Caching invitation data to improve performance
  * 
- * Uses the DeepSeek AI API for natural language generation and
+ * Uses the OpenAI API for natural language generation and
  * implements caching, error handling, and retry mechanisms.
  */
 const { PrismaClient } = require('@prisma/client');
 const logger = require('../config/logger');
 const NodeCache = require('node-cache');
-const { OpenAI } = require('openai');
+const OpenAI = require('openai');
 const { validationResult } = require('express-validator');
 const dotenv = require('dotenv');
 
@@ -31,18 +31,37 @@ const invitationCache = new NodeCache({
 });
 
 /**
- * Initialize DeepSeek API client (via OpenAI SDK)
- * The system uses DeepSeek's API for generating natural-sounding invitations,
+ * Initialize OpenAI API client
+ * The system uses OpenAI's API for generating natural-sounding invitations,
  * but falls back to mock data if the API is not configured
  */
 let openai;
 try {
-  openai = new OpenAI({
-    baseURL: 'https://api.deepseek.com',
-    apiKey: process.env.DEEPSEEK_API_KEY
+  // Configuration options for OpenAI client
+  const openaiConfig = {
+    apiKey: process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY,
+    // If using Azure OpenAI or other OpenAI-compatible endpoint
+    // Uncomment and configure these if needed
+    // baseURL: process.env.OPENAI_API_BASE || 'https://api.openai.com/v1',
+    // defaultHeaders: {
+    //   'api-key': process.env.OPENAI_API_KEY
+    // }
+  };
+  
+  // Initialize the OpenAI client with proper configuration
+  openai = new OpenAI(openaiConfig);
+  
+  logger.info('OpenAI API client initialized successfully', {
+    apiKeyConfigured: !!process.env.OPENAI_API_KEY,
+    backupKeyConfigured: !!process.env.DEEPSEEK_API_KEY,
+    apiKeyPrefix: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 7) + '...' : 'not available',
+    // baseURL: openaiConfig.baseURL || 'default'
   });
 } catch (error) {
-  logger.error('Failed to initialize DeepSeek API', { error: error.message });
+  logger.error('Failed to initialize OpenAI API', { 
+    error: error.message,
+    stack: error.stack
+  });
 }
 
 // Initialize Prisma client for database operations
@@ -505,7 +524,7 @@ exports.updateInvitation = async (req, res) => {
     let updatedContent = invitationContent;
     
     // If feedback is provided and AI API is available, regenerate invitation using feedback
-    if (feedbackText && openai && process.env.DEEPSEEK_API_KEY) {
+    if (feedbackText && openai && process.env.OPENAI_API_KEY) {
       try {
         logger.info('Regenerating invitation with user feedback', { guestId, feedbackLength: feedbackText.length });
         
@@ -528,44 +547,48 @@ ${feedbackText}
 
 請根據反饋重新製作一封邀請函，著重地融合原邀請函和反饋中提及的內容和要求，而不是附加在末尾。
 保持原邀請函的溫暖、優雅風格。
-重要: 邀請函文字必須簡潔，約210個中文字符(不超過250字符)。
-在保持簡潔的同時，仍要維持溫暖感和個人化特色。
+重要: 邀請函文字需要較充分的篇幅，控制在300-400個中文字符之間，不要過於精簡。
+在篇幅適中的同時，維持溫暖感和個人化特色，充分表達情感和誠意。
 請直接提供完整邀請函內容，不需要使用markdown格式輸出，不要包含任何其他解釋或前後文，以及電子郵件，以及任何個人機密資訊。
 `;
 
         // Record request start time for performance monitoring
         const startTime = Date.now();
         
-        // Call DeepSeek API to regenerate invitation incorporating feedback
-        const completion = await openai.chat.completions.create({
+        // Call OpenAI API to regenerate invitation incorporating feedback
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
           messages: [
             { 
               role: "system", 
-              content: "請根據反饋重新製作一封邀請函，著重地融合原邀請函和反饋中提及的內容和要求，而不是附加在末尾。" +
-              "保持原邀請函的溫暖、優雅風格。" +
-              "重要: 邀請函文字必須簡潔，約210個中文字符(不超過250字符)。" +
-              "在保持簡潔的同時，仍要維持溫暖感和個人化特色。" +
-              "請直接提供完整邀請函內容，不需要使用markdown格式輸出，不要包含任何其他解釋或前後文，以及電子郵件，以及任何個人機密資訊。"
+              content: "Please create a revised wedding invitation based on user feedback. Maintain a warm and elegant tone, aim for 300-400 Chinese characters (not less, not significantly more), and incorporate the user's suggestions into the original text. Focus on emotional depth and personal connection rather than brevity."
             },
             { role: "user", content: feedbackPrompt }
           ],
-          model: "deepseek-chat",
+          max_tokens: 1024,
+          temperature: 0.7
         });
         
         // Get the regenerated invitation content
-        let newContent = completion.choices[0].message.content;
+        let newContent = response.choices[0].message.content.trim();
         
-        // Check and ensure the content is roughly 280 characters
-        if (newContent.length > 350) {
-          logger.warn(`Feedback-generated invitation exceeds target length`, {
+        // Check and ensure the content is between 300-400 characters
+        if (newContent.length > 400) {
+          logger.warn(`Feedback-generated invitation exceeds maximum length`, {
             guestId,
             originalLength: newContent.length,
-            targetLength: 280
+            maxLength: 400
           });
           
-          // Simply truncate overly long content while preserving a clear and complete ending
-          newContent = newContent.substring(0, 270) + '...\n\n' + 
+          // Truncate overly long content while preserving a clear and complete ending
+          newContent = newContent.substring(0, 380) + '...\n\n' + 
                       `${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
+        } else if (newContent.length < 300) {
+          logger.warn(`Feedback-generated invitation is shorter than minimum length`, {
+            guestId,
+            originalLength: newContent.length,
+            minLength: 300
+          });
         }
         
         updatedContent = newContent;
@@ -642,15 +665,15 @@ async function generateInvitationWithAI(guest, coupleInfo) {
     operationId,
     guestName: guest.name,
     relationship: guest.relationship,
-    service: 'deepseek'
+    service: 'gpt-4o-mini'
   });
   
   // Record request start time for performance monitoring
   const startTime = Date.now();
   
   // Check if API client is available
-  if (!openai || !process.env.DEEPSEEK_API_KEY) {
-    logger.warn(`DeepSeek API not configured [${operationId}]`);
+  if (!openai || !process.env.OPENAI_API_KEY && !process.env.DEEPSEEK_API_KEY) {
+    logger.warn(`OpenAI API not configured [${operationId}]`);
     throw new Error('AI service not configured');
   }
   
@@ -685,18 +708,19 @@ async function generateInvitationWithAI(guest, coupleInfo) {
   // Create system prompt with detailed instructions
   const systemPrompt = 
     "You are a professional writer specializing in personalized wedding invitations. " +
-    "Create a concise yet heartfelt wedding invitation that deeply reflects the unique relationship between the couple and their guest. " +
+    "Create a heartfelt wedding invitation that deeply reflects the unique relationship between the couple and their guest. " +
     "The invitation must be highly personalized based on the specific relationship and shared memories provided. " +
     "IMPORTANT RULES: " +
-    "1. Keep the invitation concise, roughly in 300 Chinese characters maximum. " +
-    "2. Focus on quality over quantity - brief but meaningful. " +
+    "1. Create a substantial invitation between 300-400 Chinese characters. DO NOT be overly concise. " +
+    "2. Focus on emotional depth and personal connection rather than brevity. " +
     "3. ALWAYS incorporate specific personal details provided about the guest (memories, how they met, preferences). " +
     "4. Create a warm, elegant tone appropriate for a wedding. " +
-    "5. Include essential wedding details (date, time, location) in a compact format. " +
+    "5. Include essential wedding details (date, time, location) in a detailed format. " +
     "6. Format with proper paragraph breaks for readability. " +
-    "7. Sign with the couple's names at the end.";
-    "8. Do not include the guest's email address in the invitation.";
+    "7. Sign with the couple's names at the end." +
+    "8. Do not include the guest's email address in the invitation." +
     "9. Do not use markdown format in the invitation.";
+
   // Create user prompt with specific guest and couple details
   const userPrompt = `
 請為以下賓客創作一封個人化的婚禮邀請函:
@@ -719,11 +743,11 @@ async function generateInvitationWithAI(guest, coupleInfo) {
 
 重要要求:
 1. 必須使用繁體中文
-2. 邀請函需精簡，控制在300字上下
+2. 邀請函需要較充分的篇幅，控制在300-400個中文字符之間，不要過於精簡
 3. 根據賓客資料中的「相識方式」、「共同回憶」和「個人喜好」來個人化邀請函內容
-4. 如果提供了「共同回憶」，一定要巧妙融入邀請函中
+4. 如果提供了「共同回憶」，一定要巧妙融入邀請函中，並做適當展開
 5. 結尾署名格式為: ${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上
-6. 避免過於制式化的內容，確保邀請函具有獨特性和個人化特色
+6. 避免過於制式化的內容，確保邀請函具有獨特性和個人化特色，充分表達情感
 7. 不需要使用markdown格式輸出
 8. 不需要在信件提及電子郵件地址
 `;
@@ -731,79 +755,100 @@ async function generateInvitationWithAI(guest, coupleInfo) {
   try {
     // Define API call function with retry capabilities
     const generateContent = async () => {
-      // Log the start of the API request
-      logger.debug(`Sending request to DeepSeek API [${operationId}]`, {
-        operationId,
-        guestId: guest.id,
-        modelName: "deepseek-chat",
-        promptLength: userPrompt.length,
-        timestamp: new Date().toISOString()
-      });
-      
-      const apiRequestStart = Date.now();
-      
-      const completion = await openai.chat.completions.create({
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
-        model: "deepseek-chat",
-        temperature: 0.7, // Add some creativity but not too random
-        max_tokens: 500,
-        // Add request metadata for tracking
-        user: operationId
-      });
-      
-      const apiRequestDuration = Date.now() - apiRequestStart;
-      
-      // Log API response details
-      logger.debug(`DeepSeek API response received [${operationId}]`, {
-        operationId,
-        requestDuration: apiRequestDuration,
-        modelUsed: completion.model,
-        finishReason: completion.choices[0].finish_reason,
-        promptTokens: completion.usage?.prompt_tokens,
-        completionTokens: completion.usage?.completion_tokens,
-        timestamp: new Date().toISOString()
-      });
-      
-      // Validate the API response structure to ensure it conforms to the expected format and prevent processing invalid data
-      if (!completion.choices || !completion.choices[0] || !completion.choices[0].message) {
-        logger.error(`DeepSeek API returned unexpected response structure [${operationId}]`, {
+      try {
+        // Log the start of the API request with full details
+        logger.debug(`Sending request to OpenAI API [${operationId}]`, {
           operationId,
-          responseStructure: JSON.stringify(completion),
+          guestId: guest.id,
+          modelName: "gpt-4o-mini",
+          promptLength: userPrompt.length,
+          systemPromptLength: systemPrompt.length,
+          apiKeyFirstChars: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 7) + '...' : 'not available',
           timestamp: new Date().toISOString()
         });
-        throw new Error('API response structure invalid');
-      }
-      
-      let content = completion.choices[0].message.content.trim();
-      
-      // Check and ensure the content is roughly 280 characters
-      if (content.length > 350) {
-        logger.warn(`Generated invitation exceeds target length [${operationId}]`, {
-          operationId,
-          originalLength: content.length,
-          targetLength: 280
+        
+        const apiRequestStart = Date.now();
+        
+        // Use chat completions API with modern format
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ],
+          max_tokens: 1500,
+          temperature: 0.7,
+          // Add request metadata
+          user: operationId
         });
         
-        // Simply truncate overly long content while preserving a clear and complete ending
-        content = content.substring(0, 270) + '...\n\n' + 
-                  `${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上`;
+        const apiRequestDuration = Date.now() - apiRequestStart;
+        
+        // Log successful API response
+        logger.debug(`OpenAI API response received [${operationId}]`, {
+          operationId,
+          requestDuration: apiRequestDuration,
+          modelUsed: response.model || "gpt-4o-mini",
+          responseId: response.id,
+          tokenUsage: response.usage,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Validate API response format
+        if (!response || !response.choices || !response.choices[0] || !response.choices[0].message) {
+          throw new Error('API response structure invalid');
+        }
+        
+        let content = response.choices[0].message.content.trim();
+        
+        // Check and ensure the content is between 300-400 characters
+        if (content.length > 400) {
+          logger.warn(`Generated invitation exceeds maximum length [${operationId}]`, {
+            operationId,
+            originalLength: content.length,
+            maxLength: 400
+          });
+          
+          // Truncate overly long content while preserving a clear and complete ending
+          content = content.substring(0, 380) + '...\n\n' + 
+                    `${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上`;
+        } else if (content.length < 300) {
+          logger.warn(`Generated invitation is shorter than minimum length [${operationId}]`, {
+            operationId,
+            originalLength: content.length,
+            minLength: 300,
+            contentPreview: content.substring(0, 100) + '...'
+          });
+        }
+        
+        // Return the generated content
+        return content;
+      } catch (error) {
+        // Log detailed error information to help with debugging
+        logger.error(`API call error in generateContent [${operationId}]`, {
+          operationId,
+          errorMessage: error.message,
+          errorCode: error.code,
+          statusCode: error.status,
+          errorType: error.constructor.name,
+          fullError: JSON.stringify(error),
+          timestamp: new Date().toISOString()
+        });
+        
+        // Rethrow for retry mechanism to handle
+        throw error;
       }
-      
-      return content;
     };
     
     // Execute with retry mechanism for transient failures
     const content = await executeWithRetry(generateContent, 3, 1000);
     
     // Check and log content quality
-    if (!content || content.length < 50) {
-      logger.warn(`DeepSeek generated unusually short content [${operationId}]`, {
+    if (!content || content.length < 130) {
+      logger.warn(`Generated unusually short content [${operationId}]`, {
         operationId,
         contentLength: content?.length || 0,
-        contentPreview: content?.substring(0, 50),
+        contentPreview: content?.substring(0, 130),
         timestamp: new Date().toISOString()
       });
     }
@@ -817,7 +862,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
       operationId,
       durationMs: duration,
       contentLength: content.length,
-      service: 'deepseek'
+      service: 'gpt-4o-mini'
     });
     
     return content;
@@ -829,7 +874,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
       errorCode: error.code,
       statusCode: error.status,
       durationMs: Date.now() - startTime,
-      service: 'deepseek',
+      service: 'gpt-4o-mini',
       requestData: {
         guestId: guest.id,
         guestName: guest.name,
@@ -872,21 +917,42 @@ function generateMockInvitation(guest, coupleInfo) {
     greeting = `尊敬的${guest.name}：`;
   }
   
-  // Build invitation content from template
-  const invitationContent = `${greeting}
-
-值此人生重要時刻，${coupleInfo.groomName}與${coupleInfo.brideName}誠摯邀請您參加我們的婚禮。
-
-婚禮將於${weddingDate}日${coupleInfo.weddingTime}在${coupleInfo.weddingLocation}舉行。今日喜事，承蒙${guest.relationship}到場，喜氣洋洋，蓬蓽生輝。
-
-您與我們${guest.relationship}的深厚情誼，讓這一天因您的出席而更加完美。婚禮主題為「${coupleInfo.weddingTheme}」，期待您的參與，讓我們一起分享這幸福時刻。
-
-期待您的光臨，共享這一生中最特別的一天。
-
-${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上`;
+  // Add more personalized content based on relationship and available information
+  let personalizedContent = '';
+  if (guest.howMet) {
+    personalizedContent += `還記得我們在${guest.howMet}相識的日子嗎？那段時光仍然歷歷在目，成為我們生命中珍貴的回憶。`;
+  }
+  
+  if (guest.memories) {
+    personalizedContent += `我們一起經歷的${guest.memories}，那些笑聲和感動，已經成為我們友誼中不可或缺的一部分。這些共同的記憶讓我們的關係更加深厚，也讓我更加期待能在這個特別的日子與您分享我的喜悅。`;
+  }
+  
+  if (guest.preferences) {
+    personalizedContent += `知道您喜愛${guest.preferences}，我們特別在婚禮中安排了相關的元素，希望能讓您在參與我們婚禮的同時也能享受到熟悉的喜好。`;
+  }
+  
+  if (personalizedContent === '') {
+    // If no specific details are available, add generic but warm content
+    if (guest.relationship.includes('親') || guest.relationship.includes('家人')) {
+      personalizedContent = `多年來您給予我們的關愛和支持，一直是我們前進的動力。在這人生的重要時刻，您的祝福對我們格外珍貴。`;
+    } else if (guest.relationship.includes('朋友')) {
+      personalizedContent = `感謝多年來您的友誼和支持，這段珍貴的情誼讓我們的生活更加豐富多彩。很高興能在人生的這個重要時刻與您分享我們的喜悅。`;
+    } else {
+      personalizedContent = `非常感謝您在我們生命中扮演的重要角色，您的存在讓我們的生活更加完整。能在這個特別的日子邀請您出席，是我們莫大的榮幸。`;
+    }
+  }
+  
+  // Wedding details section with more elaborate description
+  const weddingDetails = `婚禮將於${weddingDate}${coupleInfo.weddingTime}在充滿浪漫氛圍的${coupleInfo.weddingLocation}舉行。我們精心準備了以「${coupleInfo.weddingTheme}」為主題的婚禮，融入了我們喜愛的元素，希望能創造一個難忘的時刻。`;
+  
+  // Closing section with sincere invitation
+  const closing = `我們誠摯地邀請您出席這個對我們來說無比重要的典禮，您的蒞臨將為我們的婚禮增添無限光彩。期待在這個充滿愛與祝福的日子裡，能與您一同見證我們人生的新篇章。\n\n懷著感恩與期待的心情`;
+  
+  // Build invitation content from template with expanded sections
+  const invitationContent = `${greeting}\n\n${personalizedContent}\n\n${weddingDetails}\n\n${closing}\n\n${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上`;
 
   // Log mock content generation
-  logger.info('Generated mock invitation content', {
+  logger.info('Generated mock invitation content (backup method)', {
     guestId: guest.id,
     guestName: guest.name,
     relationshipType: guest.relationship,
