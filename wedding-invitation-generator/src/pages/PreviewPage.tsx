@@ -573,6 +573,90 @@ const PreviewPage: React.FC = () => {
     }
   }, [state.guests, selectedGuest]);
   
+  /**
+   * Handle regenerating invitation for a specific guest from the card view
+   * 
+   * Force regenerates the invitation content for a guest even if they already have content.
+   * This is used when a user wants to get a completely new invitation suggestion.
+   * 
+   * @param {GuestInfo} guest - The guest whose invitation to regenerate
+   * @param {React.MouseEvent} e - The click event
+   */
+  const handleRegenerateInvitation = async (guest: GuestInfo, e: React.MouseEvent) => {
+    try {
+      // Prevent event from bubbling up to parent elements
+      e.stopPropagation();
+      
+      // Log the regeneration attempt
+      console.log(`Attempting to regenerate invitation for guest: ${guest.name}`, {
+        guestId: guest.id,
+        hasExistingContent: !!guest.invitationContent,
+        currentStatus: guest.status,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Check if guest is already being processed
+      if (generatingGuestId === guest.id) {
+        console.log(`Already generating invitation for ${guest.name}, avoided duplicate request`);
+        return;
+      }
+      
+      // Set generating state to show loading UI
+      setGeneratingGuestId(guest.id);
+      setError(null);
+      
+      // Force regeneration by calling the API with force=true parameter
+      const response = await api.invitations.generate(guest.id, true);
+      
+      // Validate response data
+      if (!response.data || !response.data.invitation) {
+        console.error(`Invalid API response format when regenerating invitation for ${guest.name}`, {
+          guestId: guest.id,
+          responseData: JSON.stringify(response.data)
+        });
+        throw new Error('API response format invalid during regeneration');
+      }
+      
+      // Extract content from response
+      const content = response.data.invitation;
+      
+      // Log successful regeneration
+      console.log(`Successfully regenerated invitation for ${guest.name}`, {
+        guestId: guest.id,
+        contentLength: content.length,
+        source: response.data.source
+      });
+      
+      // Update global state with newly generated content
+      dispatch({
+        type: 'UPDATE_INVITATION',
+        payload: {
+          guestId: guest.id,
+          content: content,
+          status: 'generated'
+        }
+      });
+      
+    } catch (error) {
+      // Log error details
+      console.error(`Failed to regenerate invitation for ${guest.name}:`, error);
+      console.error(`Detailed error information:`, {
+        guestId: guest.id,
+        guestName: guest.name,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Show error message to user
+      setError(`無法重新生成 ${guest.name} 的邀請函，請稍後再試。`);
+      
+    } finally {
+      // Clear generating state when done
+      setGeneratingGuestId(null);
+    }
+  };
+  
   return (
     <motion.div
       className="min-h-screen py-12 px-4 max-w-6xl mx-auto"
@@ -625,8 +709,17 @@ const PreviewPage: React.FC = () => {
               
               {/* Invitation preview card */}
               <div className="h-48 mb-3 overflow-hidden rounded-lg shadow-sm flex items-center justify-center bg-wedding-secondary">
-                {guest.invitationContent ? (
-                  /* Show invitation preview if content exists */
+                {generatingGuestId === guest.id ? (
+                  /* Loading spinner during generation or regeneration */
+                  <div className="flex flex-col items-center justify-center space-y-2">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-wedding-dark"></div>
+                    <p className="text-xs text-wedding-dark">正在生成邀請函...</p>
+                    {guest.invitationContent && (
+                      <p className="text-xs text-gray-500 italic mt-1">重新生成更好的內容</p>
+                    )}
+                  </div>
+                ) : guest.invitationContent ? (
+                  /* Show invitation preview if content exists and not regenerating */
                   <div className="w-full h-full relative">
                     <img 
                       src={templateImage} 
@@ -641,28 +734,17 @@ const PreviewPage: React.FC = () => {
                     </div>
                   </div>
                 ) : (
-                  /* Show loading or generation prompt if no content */
+                  /* Generation prompt if no content and not currently generating */
                   <div className="flex flex-col items-center justify-center space-y-2">
-                    {generatingGuestId === guest.id ? (
-                      /* Loading spinner during generation */
-                      <>
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-wedding-dark"></div>
-                        <p className="text-xs text-wedding-dark">正在生成邀請函...</p>
-                      </>
-                    ) : (
-                      /* Generation prompt */
-                      <>
-                        <svg className="w-10 h-10 text-wedding-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
-                        </svg>
-                        <p className="text-xs text-wedding-dark">點擊生成邀請函</p>
-                      </>
-                    )}
+                    <svg className="w-10 h-10 text-wedding-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                    </svg>
+                    <p className="text-xs text-wedding-dark">點擊生成邀請函</p>
                   </div>
                 )}
               </div>
               
-              {/* Status indicator and action button */}
+              {/* Status indicator and action buttons */}
               <div className="flex justify-between items-center">
                 {/* Status badge with conditional styling */}
                 <span className={`text-xs px-2 py-1 rounded ${
@@ -675,15 +757,32 @@ const PreviewPage: React.FC = () => {
                    guest.status === 'edited' ? '已編輯' : 
                    guest.status === 'sent' ? '已發送' : '未生成'}
                 </span>
-                <button 
-                  className="text-xs text-wedding-accent hover:underline"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handlePreviewInvitation(guest);
-                  }}
-                >
-                  查看邀請函
-                </button>
+                
+                {/* Action buttons container */}
+                <div className="flex space-x-2">
+                  {/* Regenerate button - only show if invitation content exists */}
+                  {guest.invitationContent && (
+                    <button 
+                      className="text-xs text-amber-600 hover:underline disabled:opacity-50 disabled:hover:no-underline"
+                      onClick={(e) => handleRegenerateInvitation(guest, e)}
+                      disabled={generatingGuestId === guest.id}
+                      title="重新生成邀請函內容"
+                    >
+                      重新生成
+                    </button>
+                  )}
+                  
+                  {/* View invitation button */}
+                  <button 
+                    className="text-xs text-wedding-accent hover:underline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlePreviewInvitation(guest);
+                    }}
+                  >
+                    查看邀請函
+                  </button>
+                </div>
               </div>
             </motion.div>
           ))}
