@@ -90,6 +90,8 @@ ${guest.memories ? `- 共同回憶: ${guest.memories}` : ''}
 - 語調要溫暖、優雅且略帶感性
 - 字句精煉
 - 不需要加入RSVP詳情
+- 不需要再信件提及電子郵件地址
+- 不需要使用markdown格式輸出
 
 請直接提供完整邀請函內容，不要包含任何其他解釋或前後文。
   `;
@@ -258,15 +260,65 @@ exports.generateInvitation = async (req, res) => {
     }
     
     // Get guest information from database
-    const guest = await prisma.guest.findUnique({
-      where: { id: guestId },
-      include: { coupleInfo: true }
-    });
+    let guest;
+    try {
+      guest = await prisma.guest.findUnique({
+        where: { id: guestId },
+        include: { coupleInfo: true }
+      });
+      
+      // 記錄資料庫查詢結果
+      logger.debug(`Database query result for guest [${traceId}]`, {
+        guestId,
+        found: !!guest,
+        traceId,
+        dbModelVersion: process.env.PRISMA_SCHEMA_VERSION || 'unknown',
+        timestamp: new Date().toISOString()
+      });
+    } catch (dbError) {
+      // 詳細記錄資料庫錯誤，可能與遷移相關
+      logger.error(`Database error when fetching guest [${traceId}]`, {
+        error: dbError.message,
+        stack: dbError.stack,
+        guestId,
+        traceId,
+        dbErrorCode: dbError.code,
+        dbErrorMeta: dbError.meta,
+        timestamp: new Date().toISOString()
+      });
+      
+      return res.status(500).json({ 
+        message: '讀取賓客資料時發生資料庫錯誤',
+        errorCode: 'DB_FETCH_ERROR',
+        referenceId: traceId
+      });
+    }
     
     // Check if guest exists
     if (!guest) {
       logger.warn(`Guest not found [${traceId}]`, { guestId, traceId });
       return res.status(404).json({ message: '找不到此賓客資料' });
+    }
+    
+    // 檢查關聯數據是否完整 - 可能指向資料庫遷移問題
+    if (!guest.coupleInfo) {
+      logger.error(`Guest found but missing coupleInfo relation [${traceId}]`, {
+        guestId,
+        traceId,
+        guestData: JSON.stringify({
+          name: guest.name,
+          email: guest.email,
+          relationship: guest.relationship,
+          coupleInfoId: guest.coupleInfoId
+        }),
+        possibleCause: 'Database migration issue - relation not properly mapped'
+      });
+      
+      return res.status(500).json({
+        message: '賓客關聯資料不完整，無法生成邀請函',
+        errorCode: 'RELATION_DATA_MISSING',
+        referenceId: traceId
+      });
     }
     
     // Check if guest already has an invitation and we're not forcing regeneration
@@ -324,14 +376,67 @@ exports.generateInvitation = async (req, res) => {
     }
     
     // Update guest record with generated invitation
-    await prisma.guest.update({
-      where: { id: guestId },
-      data: {
-        invitationContent,
-        status: 'generated',
-        updatedAt: new Date()
+    try {
+      const beforeUpdate = new Date();
+      
+      const updatedGuest = await prisma.guest.update({
+        where: { id: guestId },
+        data: {
+          invitationContent,
+          status: 'generated',
+          updatedAt: new Date()
+        }
+      });
+      
+      const updateDuration = new Date() - beforeUpdate;
+      
+      // 記錄資料庫更新結果詳情
+      logger.info(`Database update completed [${traceId}]`, {
+        guestId,
+        success: !!updatedGuest,
+        updateDuration,
+        contentSaved: updatedGuest.invitationContent === invitationContent,
+        contentLength: updatedGuest.invitationContent?.length,
+        traceId
+      });
+      
+      // 如果存儲的內容與生成的內容不符，記錄警告
+      if (updatedGuest.invitationContent !== invitationContent) {
+        logger.warn(`Saved invitation content differs from generated content [${traceId}]`, {
+          guestId,
+          generatedLength: invitationContent.length,
+          savedLength: updatedGuest.invitationContent?.length,
+          traceId,
+          possibleCause: 'Database schema issue or truncation'
+        });
       }
-    });
+    } catch (dbUpdateError) {
+      // 詳細記錄資料庫更新錯誤，可能與遷移和模型結構有關
+      logger.error(`Failed to save invitation to database [${traceId}]`, {
+        error: dbUpdateError.message,
+        stack: dbUpdateError.stack,
+        errorCode: dbUpdateError.code,
+        errorMeta: dbUpdateError.meta,
+        guestId,
+        contentLength: invitationContent?.length,
+        traceId,
+        timestamp: new Date().toISOString(),
+        prismaModelMetadata: {
+          version: process.env.PRISMA_SCHEMA_VERSION || 'unknown',
+          modelName: 'Guest',
+          fieldName: 'invitationContent'
+        }
+      });
+      
+      // 即使無法保存到資料庫，也返回生成的內容
+      return res.status(200).json({
+        message: '邀請函已生成但未能保存到資料庫',
+        invitation: invitationContent,
+        source: 'newly_generated',
+        warning: 'database_save_failed',
+        referenceId: traceId
+      });
+    }
     
     // Store in cache
     invitationCache.set(cacheKey, invitationContent);
@@ -349,15 +454,22 @@ exports.generateInvitation = async (req, res) => {
       source: 'newly_generated'
     });
   } catch (error) {
-    // Log unexpected errors
-    logger.error('Error generating invitation', {
+    // 更詳細記錄未預期錯誤
+    const errorId = `ERR-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`;
+    
+    logger.error(`Unexpected error generating invitation [${errorId}]`, {
+      errorId,
       error: error.message,
       stack: error.stack,
-      guestId: req.body?.guestId
+      guestId: req.body?.guestId,
+      query: req.query,
+      headers: req.headers,
+      timestamp: new Date().toISOString()
     });
     
     res.status(500).json({
       message: '生成邀請函時發生錯誤',
+      errorId: errorId,
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -415,7 +527,10 @@ ${guest.memories ? `- 共同回憶: ${guest.memories}` : ''}
 ${feedbackText}
 
 請根據反饋重新製作一封邀請函，著重地融合原邀請函和反饋中提及的內容和要求，而不是附加在末尾。
-保持原邀請函的溫暖、優雅風格。請直接提供完整邀請函內容，不要包含任何其他解釋或前後文。
+保持原邀請函的溫暖、優雅風格。
+重要: 邀請函文字必須簡潔，約210個中文字符(不超過250字符)。
+在保持簡潔的同時，仍要維持溫暖感和個人化特色。
+請直接提供完整邀請函內容，不需要使用markdown格式輸出，不要包含任何其他解釋或前後文，以及電子郵件，以及任何個人機密資訊。
 `;
 
         // Record request start time for performance monitoring
@@ -426,7 +541,11 @@ ${feedbackText}
           messages: [
             { 
               role: "system", 
-              content: "你是一個幫助撰寫婚禮邀請函的專業助手。請根據提供的新人和賓客資訊，生成一封個性化、溫馨且符合關係的邀請函。" 
+              content: "請根據反饋重新製作一封邀請函，著重地融合原邀請函和反饋中提及的內容和要求，而不是附加在末尾。" +
+              "保持原邀請函的溫暖、優雅風格。" +
+              "重要: 邀請函文字必須簡潔，約210個中文字符(不超過250字符)。" +
+              "在保持簡潔的同時，仍要維持溫暖感和個人化特色。" +
+              "請直接提供完整邀請函內容，不需要使用markdown格式輸出，不要包含任何其他解釋或前後文，以及電子郵件，以及任何個人機密資訊。"
             },
             { role: "user", content: feedbackPrompt }
           ],
@@ -434,7 +553,22 @@ ${feedbackText}
         });
         
         // Get the regenerated invitation content
-        updatedContent = completion.choices[0].message.content;
+        let newContent = completion.choices[0].message.content;
+        
+        // 檢查並確保內容在約280字左右
+        if (newContent.length > 350) {
+          logger.warn(`Feedback-generated invitation exceeds target length`, {
+            guestId,
+            originalLength: newContent.length,
+            targetLength: 280
+          });
+          
+          // 簡單截斷過長的內容，並確保結尾完整
+          newContent = newContent.substring(0, 270) + '...\n\n' + 
+                      `${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
+        }
+        
+        updatedContent = newContent;
         
         // Record AI request completion time for performance monitoring
         const aiResponseTime = Date.now() - startTime;
@@ -520,53 +654,162 @@ async function generateInvitationWithAI(guest, coupleInfo) {
     throw new Error('AI service not configured');
   }
   
+  // 檢查輸入參數數據完整性 - 避免在 AI 生成時遇到 null 或 undefined 值
+  const missingFields = [];
+  if (!guest.name) missingFields.push('guest.name');
+  if (!guest.relationship) missingFields.push('guest.relationship');
+  if (!coupleInfo.groomName) missingFields.push('coupleInfo.groomName');
+  if (!coupleInfo.brideName) missingFields.push('coupleInfo.brideName');
+  if (!coupleInfo.weddingDate) missingFields.push('coupleInfo.weddingDate');
+  
+  if (missingFields.length > 0) {
+    const error = new Error(`Missing required fields for AI generation: ${missingFields.join(', ')}`);
+    logger.error(`Data integrity issue in AI input [${operationId}]`, {
+      operationId,
+      missingFields,
+      guest: {
+        id: guest.id,
+        name: guest.name,
+        relationship: guest.relationship,
+      },
+      coupleInfo: {
+        id: coupleInfo.id,
+        groomName: coupleInfo.groomName,
+        brideName: coupleInfo.brideName
+      },
+      possibleCause: 'Database migration schema change or incomplete data'
+    });
+    throw error;
+  }
+  
   // Create system prompt with detailed instructions
   const systemPrompt = 
     "You are a professional writer specializing in personalized wedding invitations. " +
-    "Create a heartfelt, warm invitation that reflects the relationship between the couple and their guest. " +
-    "The tone should be formal but intimate, with cultural sensitivity appropriate for the context. " +
-    "Include specific details about the wedding location, date, and time. " +
-    "Keep the invitation between 150-250 words and structure it with proper paragraphs.";
-  
+    "Create a concise yet heartfelt wedding invitation that deeply reflects the unique relationship between the couple and their guest. " +
+    "The invitation must be highly personalized based on the specific relationship and shared memories provided. " +
+    "IMPORTANT RULES: " +
+    "1. Keep the invitation VERY concise, between 150-200 Chinese characters maximum. " +
+    "2. Focus on quality over quantity - brief but meaningful. " +
+    "3. ALWAYS incorporate specific personal details provided about the guest (memories, how they met, preferences). " +
+    "4. Create a warm, elegant tone appropriate for a wedding. " +
+    "5. Include essential wedding details (date, time, location) in a compact format. " +
+    "6. Format with proper paragraph breaks for readability. " +
+    "7. Sign with the couple's names at the end.";
+    "8. Do not include the guest's email address in the invitation.";
+    "9. Do not use markdown format in the invitation.";
   // Create user prompt with specific guest and couple details
   const userPrompt = `
-Please write a wedding invitation for this guest:
-- Guest Name: ${guest.name}
-- Relationship to Couple: ${guest.relationship}
-- Email: ${guest.email}
+請為以下賓客創作一封個人化的婚禮邀請函:
 
-Wedding Details:
-- Groom's Name: ${coupleInfo.groomName}
-- Bride's Name: ${coupleInfo.brideName}
-- Wedding Date: ${coupleInfo.weddingDate.toISOString().split('T')[0]}
-- Wedding Time: ${coupleInfo.weddingTime}
-- Wedding Location: ${coupleInfo.weddingLocation}
-- Wedding Theme: ${coupleInfo.weddingTheme}
+賓客資料:
+- 姓名: ${guest.name}
+- 與新人關係: ${guest.relationship}
+- 相識方式: ${guest.howMet || '未提供'}
+- 共同回憶: ${guest.memories || '未提供'}
+- 個人喜好: ${guest.preferences || '未提供'}
 
-The invitation should be written in Traditional Chinese (繁體中文).
-Make the invitation personal, mentioning the specific relationship with the couple.
+婚禮資訊:
+- 新郎: ${coupleInfo.groomName}
+- 新娘: ${coupleInfo.brideName}
+- 婚禮日期: ${coupleInfo.weddingDate.toISOString().split('T')[0]}
+- 婚禮時間: ${coupleInfo.weddingTime}
+- 婚禮地點: ${coupleInfo.weddingLocation}
+- 婚禮主題: ${coupleInfo.weddingTheme}
+- 背景故事: ${coupleInfo.backgroundStory || '未提供'}
+
+重要要求:
+1. 必須使用繁體中文
+2. 邀請函必須非常精簡，控制在150-200字之間
+3. 根據賓客資料中的「相識方式」、「共同回憶」和「個人喜好」來個人化邀請函內容
+4. 如果提供了「共同回憶」，一定要巧妙融入邀請函中
+5. 結尾署名格式為: ${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上
+6. 避免過於制式化的內容，確保邀請函具有獨特性和個人化特色
+7. 不需要使用markdown格式輸出
+8. 不需要在信件提及電子郵件地址
 `;
   
   try {
     // Define API call function with retry capabilities
     const generateContent = async () => {
+      // 記錄 API 請求開始
+      logger.debug(`Sending request to DeepSeek API [${operationId}]`, {
+        operationId,
+        guestId: guest.id,
+        modelName: "deepseek-chat",
+        promptLength: userPrompt.length,
+        timestamp: new Date().toISOString()
+      });
+      
+      const apiRequestStart = Date.now();
+      
       const completion = await openai.chat.completions.create({
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt }
         ],
-        model: "deepseek-reasoner",
+        model: "deepseek-chat",
         temperature: 0.7, // Add some creativity but not too random
         max_tokens: 500,
         // Add request metadata for tracking
         user: operationId
       });
       
-      return completion.choices[0].message.content.trim();
+      const apiRequestDuration = Date.now() - apiRequestStart;
+      
+      // 記錄 API 響應詳情
+      logger.debug(`DeepSeek API response received [${operationId}]`, {
+        operationId,
+        requestDuration: apiRequestDuration,
+        modelUsed: completion.model,
+        finishReason: completion.choices[0].finish_reason,
+        promptTokens: completion.usage?.prompt_tokens,
+        completionTokens: completion.usage?.completion_tokens,
+        timestamp: new Date().toISOString()
+      });
+      
+      // 檢查 API 響應結構
+      if (!completion.choices || !completion.choices[0] || !completion.choices[0].message) {
+        logger.error(`DeepSeek API returned unexpected response structure [${operationId}]`, {
+          operationId,
+          responseStructure: JSON.stringify(completion),
+          timestamp: new Date().toISOString()
+        });
+        throw new Error('API response structure invalid');
+      }
+      
+      let content = completion.choices[0].message.content.trim();
+      
+      // 檢查並確保內容在約280字左右
+      if (content.length > 350) {
+        logger.warn(`Generated invitation exceeds target length [${operationId}]`, {
+          operationId,
+          originalLength: content.length,
+          targetLength: 280
+        });
+        
+        // 簡單截斷過長的內容，並確保結尾完整
+        content = content.substring(0, 270) + '...\n\n' + 
+                  `${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上`;
+      }
+      
+      return content;
     };
     
     // Execute with retry mechanism for transient failures
     const content = await executeWithRetry(generateContent, 3, 1000);
+    
+    // 檢查並記錄內容品質
+    if (!content || content.length < 50) {
+      logger.warn(`DeepSeek generated unusually short content [${operationId}]`, {
+        operationId,
+        contentLength: content?.length || 0,
+        contentPreview: content?.substring(0, 50),
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // 記錄最終生成內容的長度
+    logger.info(`Generated invitation length: ${content.length} characters [${operationId}]`);
     
     // Calculate and log performance metrics
     const duration = Date.now() - startTime;
@@ -586,7 +829,14 @@ Make the invitation personal, mentioning the specific relationship with the coup
       errorCode: error.code,
       statusCode: error.status,
       durationMs: Date.now() - startTime,
-      service: 'deepseek'
+      service: 'deepseek',
+      requestData: {
+        guestId: guest.id,
+        guestName: guest.name,
+        relationship: guest.relationship
+      },
+      apiErrorDetails: error.response?.data || 'No API error details available',
+      timestamp: new Date().toISOString()
     });
     
     // Rethrow with context for higher-level handling

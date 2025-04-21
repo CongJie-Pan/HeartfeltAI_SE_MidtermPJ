@@ -516,15 +516,15 @@ const ConfirmationPage: React.FC = () => {
             <div className="absolute inset-0" onClick={closeModal}></div>
             
             <motion.div
-              className="bg-white rounded-xl max-w-2xl w-full z-10 overflow-hidden"
+              className="bg-white rounded-xl max-w-2xl w-full z-10 overflow-hidden max-h-[90vh] flex flex-col"
               variants={modalVariants}
               initial="hidden"
               animate="visible"
               exit="exit"
               onClick={(e) => e.stopPropagation()} // Prevent clicks from bubbling to backdrop
             >
-              <div className="p-6">
-                <div className="border-b pb-3 mb-4">
+              <div className="p-6 flex flex-col h-full overflow-hidden">
+                <div className="border-b pb-3 mb-4 flex-shrink-0">
                   <h3 className="text-xl font-medium mb-1 text-wedding-dark">電子郵件預覽</h3>
                   <p className="text-sm text-gray-500">
                     收件人：{selectedGuest.name} ({selectedGuest.email})
@@ -532,31 +532,35 @@ const ConfirmationPage: React.FC = () => {
                 </div>
                 
                 {/* Email content preview/edit area */}
-                <div className="border rounded-lg p-4 mb-4">
-                  <div className="border-b pb-2 mb-3">
-                    <div className="font-medium">主旨：{state.coupleInfo.groomName} & {state.coupleInfo.brideName} 的婚禮邀請函</div>
-                    <div className="text-xs text-gray-500">
-                      寄件人：{state.coupleInfo.groomName} & {state.coupleInfo.brideName}
+                <div className="border rounded-lg overflow-hidden flex flex-col mb-4 flex-1">
+                  <div className="sticky top-0 z-10 bg-white border-b">
+                    <div className="px-4 py-3">
+                      <div className="font-medium">主旨：{state.coupleInfo.groomName} & {state.coupleInfo.brideName} 的婚禮邀請函</div>
+                      <div className="text-xs text-gray-500">
+                        寄件人：{state.coupleInfo.groomName} & {state.coupleInfo.brideName}
+                      </div>
                     </div>
                   </div>
                   
-                  {editMode ? (
-                    // Editable textarea when in edit mode
-                    <textarea
-                      className="w-full h-64 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-wedding-accent focus:border-transparent resize-none"
-                      value={editContent}
-                      onChange={(e) => setEditContent(e.target.value)}
-                    />
-                  ) : (
-                    // Read-only view when in preview mode
-                    <div className="text-sm whitespace-pre-line">
-                      {selectedGuest.invitationContent}
-                    </div>
-                  )}
+                  <div className="p-4 overflow-y-auto flex-1">
+                    {editMode ? (
+                      // Editable textarea when in edit mode
+                      <textarea
+                        className="w-full h-64 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-wedding-accent focus:border-transparent resize-none"
+                        value={editContent}
+                        onChange={(e) => setEditContent(e.target.value)}
+                      />
+                    ) : (
+                      // Read-only view when in preview mode
+                      <div className="text-sm whitespace-pre-line">
+                        {selectedGuest.invitationContent}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 
                 {/* Action buttons that change based on current mode */}
-                <div className="flex justify-end space-x-3">
+                <div className="flex justify-end space-x-3 flex-shrink-0">
                   {editMode ? (
                     // Edit mode buttons
                     <>

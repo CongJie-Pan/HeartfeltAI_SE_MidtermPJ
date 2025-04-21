@@ -13,7 +13,7 @@
  * - Modal interface for detailed preview and editing
  * - Status indicators for each invitation
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProgressIndicator from '../components/ProgressIndicator';
 import { useWedding } from '../context/WeddingContext';
@@ -39,64 +39,8 @@ const PreviewPage: React.FC = () => {
   const [selectedGuest, setSelectedGuest] = useState<GuestInfo | null>(null);  // Currently selected guest for preview
   const [editMode, setEditMode] = useState(false);                             // Whether edit mode is active
   const [invitationFeedback, setInvitationFeedback] = useState('');            // User feedback for customization
-  const [isGenerating, setIsGenerating] = useState(false);                     // Loading state for generation
   const [error, setError] = useState<string | null>(null);                     // Error message if any
-  
-  /**
-   * Generate invitations for all guests on page load
-   * 
-   * This effect runs when the page loads and ensures all guests
-   * have invitation content generated for them.
-   */
-  useEffect(() => {
-    const generateAllInvitations = async () => {
-      try {
-        dispatch({ type: 'SET_LOADING', payload: true });
-        
-        // Generate invitations for guests that don't have one yet
-        for (const guest of state.guests) {
-          if (!guest.invitationContent) {
-            try {
-              // Call API to generate invitation content
-              const response = await api.invitations.generate(guest.id);
-              
-              // Update state with generated content
-              dispatch({
-                type: 'UPDATE_INVITATION',
-                payload: {
-                  guestId: guest.id,
-                  content: response.data.invitationContent,
-                  status: 'generated'
-                }
-              });
-            } catch (err) {
-              console.error(`Unable to generate invitation for guest ${guest.name}:`, err);
-              
-              // Use fallback content generation if API fails
-              const fallbackContent = generateFallbackInvitation(guest);
-              dispatch({
-                type: 'UPDATE_INVITATION',
-                payload: {
-                  guestId: guest.id,
-                  content: fallbackContent,
-                  status: 'generated'
-                }
-              });
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error generating invitations:', error);
-        setError('無法生成部分邀請函，請稍後再試。');
-      } finally {
-        dispatch({ type: 'SET_LOADING', payload: false });
-      }
-    };
-    
-    if (state.guests.length > 0) {
-      generateAllInvitations();
-    }
-  }, [state.guests, dispatch]);
+  const [generatingGuestId, setGeneratingGuestId] = useState<string | null>(null); // Track which specific guest is being generated
   
   /**
    * Generate fallback invitation content
@@ -107,7 +51,8 @@ const PreviewPage: React.FC = () => {
    * @param {GuestInfo} guest - The guest to generate content for
    * @returns {string} Generated invitation text
    */
-  const generateFallbackInvitation = (guest: GuestInfo) => {
+  const generateFallbackInvitation = useCallback((guest: GuestInfo) => {
+    console.log('Generating fallback invitation due to API failure for guest:', guest.name);
     return `
       尊敬的 ${guest.name} ${guest.relationship === '親戚' || guest.relationship === '家人' ? '家人' : '先生/女士'}：
       
@@ -124,74 +69,235 @@ const PreviewPage: React.FC = () => {
       
       新人：${state.coupleInfo.groomName} & ${state.coupleInfo.brideName}
     `;
+  }, [state.coupleInfo]);
+  
+  /**
+   * Generate invitation for a single guest
+   * 
+   * Calls the API to generate an invitation for the specified guest.
+   * Updates both global state and local state after successful generation.
+   * Includes additional error handling and state synchronization mechanisms.
+   * 
+   * @param {GuestInfo} guest - The guest to generate invitation for
+   * @returns {Promise<string | null>} The generated invitation content or null if generation fails
+   */
+  const generateInvitation = async (guest: GuestInfo) => {
+    // If this guest is already being processed, avoid duplicate requests
+    if (generatingGuestId === guest.id) {
+      console.log(`已經在為賓客 ${guest.name} 生成邀請函，避免重複請求`);
+      return null;
+    }
+    
+    // Check if the guest might already have content that's out of sync
+    const latestData = getLatestGuestData(guest.id);
+    if (latestData?.invitationContent && !guest.invitationContent) {
+      console.log(`賓客 ${guest.name} 邀請函已存在但狀態不同步，跳過重新生成`, {
+        guestId: guest.id,
+        contentLength: latestData.invitationContent.length
+      });
+      
+      // Return the existing content without making an API call
+      return latestData.invitationContent;
+    }
+    
+    // Set the generating state to show loading UI
+    setGeneratingGuestId(guest.id);
+    setError(null);
+    
+    try {
+      console.log(`嘗試為賓客 ${guest.name} 生成邀請函`, {
+        guestId: guest.id,
+        hasExistingContent: !!guest.invitationContent,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Call API to generate invitation content
+      const response = await api.invitations.generate(guest.id);
+      
+      // 檢查回應數據結構
+      if (!response.data || !response.data.invitation) {
+        console.error(`DeepSeek API 回應格式不正確，可能與資料庫結構不匹配`, {
+          guestId: guest.id,
+          guestName: guest.name,
+          responseData: JSON.stringify(response.data)
+        });
+        throw new Error('API response format invalid');
+      }
+      
+      // 記錄成功生成的邀請函內容
+      const content = response.data.invitation;
+      console.log(`成功從後端獲取 ${guest.name} 的邀請函`, {
+        source: response.data.source,
+        contentLength: content.length
+      });
+      
+      // Update global state with generated content
+      dispatch({
+        type: 'UPDATE_INVITATION',
+        payload: {
+          guestId: guest.id,
+          content: content,
+          status: 'generated'
+        }
+      });
+      
+      return content;
+    } catch (err) {
+      console.error(`無法為賓客 ${guest.name} 生成邀請函:`, err);
+      console.error(`詳細錯誤資訊:`, {
+        guestId: guest.id, 
+        guestName: guest.name,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        errorStack: err instanceof Error ? err.stack : undefined,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Secondary check - even if API call failed, check if data exists in global state
+      const stateCheck = getLatestGuestData(guest.id);
+      if (stateCheck?.invitationContent) {
+        console.log(`雖然API調用失敗但發現賓客 ${guest.name} 已有邀請函內容，使用現有內容`, {
+          guestId: guest.id,
+          contentLength: stateCheck.invitationContent.length
+        });
+        return stateCheck.invitationContent;
+      }
+      
+      // Use fallback content generation if API fails and no existing content
+      const fallbackContent = generateFallbackInvitation(guest);
+      console.log(`使用備用內容為 ${guest.name} 生成邀請函`);
+      dispatch({
+        type: 'UPDATE_INVITATION',
+        payload: {
+          guestId: guest.id,
+          content: fallbackContent,
+          status: 'generated'
+        }
+      });
+      
+      return fallbackContent;
+    } finally {
+      setGeneratingGuestId(null);
+    }
+  };
+  
+  /**
+   * Get the latest guest data from state
+   * 
+   * This ensures we always have the most up-to-date guest information
+   * when switching between guests.
+   * 
+   * @param {string} guestId - The ID of the guest to retrieve
+   * @returns {GuestInfo | undefined} The latest guest data or undefined if not found
+   */
+  const getLatestGuestData = (guestId: string) => {
+    return state.guests.find(g => g.id === guestId);
   };
   
   /**
    * Handle invitation preview
    * 
    * Opens the preview modal for a specific guest's invitation,
-   * generating content if necessary.
+   * generating content if necessary. Always retrieves the latest
+   * data to ensure we display the correct generation status.
    * 
    * @param {GuestInfo} guest - The guest whose invitation to preview
    */
   const handlePreviewInvitation = async (guest: GuestInfo) => {
     try {
-      // Generate invitation content if not already available
-      if (!guest.invitationContent) {
-        setIsGenerating(true);
-        setError(null);
-        
-        try {
-          // Call API to generate invitation
-          const response = await api.invitations.generate(guest.id);
-          
-          // Update state with generated content
-          dispatch({
-            type: 'UPDATE_INVITATION',
-            payload: {
-              guestId: guest.id,
-              content: response.data.invitationContent,
-              status: 'generated'
-            }
-          });
-          
-          // Update the guest object with new content
-          guest = {
-            ...guest,
-            invitationContent: response.data.invitationContent,
-            status: 'generated'
-          };
-        } catch (err) {
-          console.error('Error generating invitation:', err);
-          
-          // Use fallback content if API fails
-          const fallbackContent = generateFallbackInvitation(guest);
-          dispatch({
-            type: 'UPDATE_INVITATION',
-            payload: {
-              guestId: guest.id,
-              content: fallbackContent,
-              status: 'generated'
-            }
-          });
-          
-          // Update the guest object with fallback content
-          guest = {
-            ...guest,
-            invitationContent: fallbackContent,
-            status: 'generated'
-          };
-        }
+      // Always get the latest guest data to ensure accurate generation status
+      const latestGuestData = getLatestGuestData(guest.id);
+      
+      if (!latestGuestData) {
+        console.error(`找不到賓客資料: ${guest.id}`);
+        setError('找不到賓客資料，請重新整理頁面');
+        return;
       }
       
-      // Set selected guest to open preview modal
-      setSelectedGuest(guest);
+      // Clear any previous guest selection and reset edit mode
       setEditMode(false);
+      setInvitationFeedback('');
+      
+      // 記錄賓客切換
+      console.log(`切換到賓客: ${latestGuestData.name}`, {
+        guestId: latestGuestData.id,
+        hasContent: !!latestGuestData.invitationContent,
+        status: latestGuestData.status,
+        isGenerating: generatingGuestId === latestGuestData.id
+      });
+      
+      // Set selected guest to open preview modal with latest data
+      // Using a new object reference to ensure state update triggers re-render
+      setSelectedGuest({...latestGuestData});
+      
     } catch (error) {
       console.error('Error handling invitation preview:', error);
+      console.error(`處理邀請函預覽時發生錯誤`, {
+        guestId: guest.id,
+        guestName: guest.name,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString()
+      });
       setError('無法顯示邀請函預覽，請稍後再試。');
-    } finally {
-      setIsGenerating(false);
+    }
+  };
+  
+  /**
+   * Handle generating invitation from preview modal
+   * 
+   * Generates invitation content for a guest when the "生成邀請函" button is clicked
+   * and ensures the selected guest data is up-to-date after generation.
+   * Directly updates the selected guest state to ensure immediate UI refresh.
+   */
+  const handleGenerateInvitation = async () => {
+    if (!selectedGuest) return;
+    
+    try {
+      // Verify the guest doesn't already have content being generated
+      if (generatingGuestId === selectedGuest.id) {
+        console.log(`已經在為賓客 ${selectedGuest.name} 生成邀請函，避免重複請求`);
+        return;
+      }
+      
+      // Check if maybe the guest already has content that we missed
+      const freshData = getLatestGuestData(selectedGuest.id);
+      if (freshData?.invitationContent && !selectedGuest.invitationContent) {
+        console.log(`發現賓客 ${selectedGuest.name} 已有邀請函但本地狀態未更新，進行同步更新`);
+        setSelectedGuest({...freshData});
+        return;
+      }
+      
+      // Call the generate function with the selected guest
+      const content = await generateInvitation(selectedGuest);
+      
+      if (content) {
+        // After generation, always fetch the latest guest data from state to ensure accuracy
+        const updatedGuest = getLatestGuestData(selectedGuest.id);
+        
+        // Log whether we found updated guest data
+        console.log(`邀請函生成後獲取賓客數據`, {
+          guestId: selectedGuest.id,
+          foundUpdatedData: !!updatedGuest,
+          contentLength: content.length
+        });
+        
+        // Only update the selected guest if we found updated data
+        if (updatedGuest) {
+          // Immediately update the selected guest with the latest data
+          setSelectedGuest({...updatedGuest});
+        } else {
+          // Fallback to updating only the content locally if we can't find the guest in state
+          console.warn(`無法在狀態中找到賓客 ${selectedGuest.id}，使用本地更新`);
+          setSelectedGuest({
+            ...selectedGuest,
+            invitationContent: content,
+            status: 'generated'
+          });
+        }
+      }
+    } catch (error) {
+      console.error(`生成邀請函時發生錯誤:`, error);
+      setError('生成邀請函時發生錯誤，請稍後再試。');
     }
   };
   
@@ -211,50 +317,112 @@ const PreviewPage: React.FC = () => {
    * Save edited invitation content
    * 
    * Processes user feedback to update the invitation content
-   * by sending it to the backend for AI regeneration
+   * by sending it to the backend for AI regeneration. After updating,
+   * ensures the component state reflects the latest guest data.
    */
   const handleSaveInvitationFeedback = async () => {
-    if (selectedGuest && invitationFeedback.trim()) {
+    if (!selectedGuest || !invitationFeedback.trim()) return;
+    
+    try {
+      // Track which guest is being updated and set generating state
+      setGeneratingGuestId(selectedGuest.id);
+      setError(null);
+      
+      console.log(`嘗試使用反饋更新 ${selectedGuest.name} 的邀請函`, {
+        guestId: selectedGuest.id,
+        feedbackLength: invitationFeedback.length,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Call API to update invitation with feedback text
+      await api.invitations.update(
+        selectedGuest.id, 
+        selectedGuest.invitationContent || '', 
+        invitationFeedback.trim()
+      );
+      
+      // Fetch the updated invitation after regeneration
       try {
-        setIsGenerating(true);
-        setError(null);
+        // Force regeneration to get the latest content
+        const response = await api.invitations.generate(selectedGuest.id, true);
         
-        // Call API to update invitation with feedback text
-        await api.invitations.update(selectedGuest.id, selectedGuest.invitationContent || '', invitationFeedback || '');        
-        // Fetch the updated invitation after regeneration
-        try {
-          const response = await api.invitations.generate(selectedGuest.id, true);
-          
-          // Update state with regenerated content
-          dispatch({
-            type: 'UPDATE_INVITATION',
-            payload: {
-              guestId: selectedGuest.id,
-              content: response.data.invitationContent,
-              status: 'edited'
-            }
+        // 檢查是否成功獲取更新後的內容
+        if (!response.data || !response.data.invitation) {
+          console.error(`編輯後獲取更新邀請函失敗：API回應格式不正確`, {
+            guestId: selectedGuest.id,
+            responseData: JSON.stringify(response.data)
           });
-          
-          // Update selected guest with new content
+          throw new Error('Failed to get updated invitation after feedback - invalid API response');
+        }
+        
+        const updatedContent = response.data.invitation;
+        
+        console.log(`成功獲取根據反饋更新的邀請函`, {
+          guestId: selectedGuest.id,
+          contentLength: updatedContent.length,
+          source: response.data.source
+        });
+        
+        // Update state with regenerated content
+        dispatch({
+          type: 'UPDATE_INVITATION',
+          payload: {
+            guestId: selectedGuest.id,
+            content: updatedContent,
+            status: 'edited'
+          }
+        });
+        
+        // Get the latest guest data after state update
+        const updatedGuest = getLatestGuestData(selectedGuest.id);
+        
+        // Log whether we found updated guest data
+        console.log(`邀請函編輯後獲取賓客數據`, {
+          guestId: selectedGuest.id,
+          foundUpdatedData: !!updatedGuest,
+          contentLength: updatedContent.length
+        });
+        
+        // Update selected guest with new content - use deep copy to ensure state change is detected
+        if (updatedGuest) {
+          setSelectedGuest({...updatedGuest});
+        } else {
+          console.warn(`編輯後無法在狀態中找到賓客 ${selectedGuest.id}，使用本地更新`);
           setSelectedGuest({
             ...selectedGuest,
-            invitationContent: response.data.invitationContent,
+            invitationContent: updatedContent,
             status: 'edited'
           });
-        } catch (fetchError) {
-          console.error('Error fetching updated invitation:', fetchError);
-          setError('無法取得更新後的邀請函，請稍後再嘗試。');
         }
         
         // Show success message and exit edit mode
         alert('感謝您的反饋！已根據您的需求更新邀請函文字。');
         setEditMode(false);
-      } catch (error) {
-        console.error('Error updating invitation text:', error);
-        setError('無法更新邀請函，請稍後再試。');
-      } finally {
-        setIsGenerating(false);
+      } catch (fetchError) {
+        console.error('Error fetching updated invitation:', fetchError);
+        console.error(`獲取更新後邀請函失敗`, {
+          guestId: selectedGuest.id,
+          guestName: selectedGuest.name,
+          errorMessage: fetchError instanceof Error ? fetchError.message : String(fetchError),
+          errorStack: fetchError instanceof Error ? fetchError.stack : undefined,
+          timestamp: new Date().toISOString()
+        });
+        setError('無法取得更新後的邀請函，請稍後再嘗試。');
       }
+    } catch (error) {
+      console.error('Error updating invitation text:', error);
+      console.error(`更新邀請函文字時發生錯誤`, {
+        guestId: selectedGuest.id,
+        guestName: selectedGuest.name,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+        feedbackLength: invitationFeedback.length
+      });
+      setError('無法更新邀請函，請稍後再試。');
+    } finally {
+      // Clear generating states when done
+      setGeneratingGuestId(null);
     }
   };
   
@@ -381,6 +549,30 @@ const PreviewPage: React.FC = () => {
     }
   };
   
+  /**
+   * Effect to sync selected guest with any changes in the global state
+   * 
+   * This ensures that if a guest's invitation content is updated in the global state,
+   * and that guest is currently selected, the UI will reflect those changes immediately.
+   */
+  useEffect(() => {
+    if (selectedGuest) {
+      const updatedGuest = getLatestGuestData(selectedGuest.id);
+      if (updatedGuest && 
+          (updatedGuest.invitationContent !== selectedGuest.invitationContent ||
+           updatedGuest.status !== selectedGuest.status)) {
+        console.log('Syncing selected guest with updated global state data', {
+          guestId: selectedGuest.id,
+          oldStatus: selectedGuest.status,
+          newStatus: updatedGuest.status,
+          hasContentBefore: !!selectedGuest.invitationContent,
+          hasContentAfter: !!updatedGuest.invitationContent
+        });
+        setSelectedGuest(updatedGuest);
+      }
+    }
+  }, [state.guests, selectedGuest]);
+  
   return (
     <motion.div
       className="min-h-screen py-12 px-4 max-w-6xl mx-auto"
@@ -439,10 +631,11 @@ const PreviewPage: React.FC = () => {
                     <img 
                       src={templateImage} 
                       alt="邀請函背景" 
-                      className="w-full h-full object-cover absolute inset-0 opacity-40" 
+                      className="w-full h-full object-cover absolute inset-0 opacity-20" 
+                      style={{ backgroundColor: '#ffe1e6' }}
                     />
                     <div className="absolute inset-0 flex items-center justify-center p-4">
-                      <p className="text-xs text-center text-wedding-dark line-clamp-6 relative z-10">
+                      <p className="text-xs text-center text-black font-medium line-clamp-6 relative z-10">
                         {guest.invitationContent.substring(0, 120)}...
                       </p>
                     </div>
@@ -450,7 +643,7 @@ const PreviewPage: React.FC = () => {
                 ) : (
                   /* Show loading or generation prompt if no content */
                   <div className="flex flex-col items-center justify-center space-y-2">
-                    {isGenerating ? (
+                    {generatingGuestId === guest.id ? (
                       /* Loading spinner during generation */
                       <>
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-wedding-dark"></div>
@@ -516,57 +709,77 @@ const PreviewPage: React.FC = () => {
         </button>
       </div>
       
-      {/* Preview/edit modal */}
+      {/* Preview/edit modal with guest-specific state awareness */}
       <AnimatePresence>
         {selectedGuest && (
           <motion.div
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={closeModal}
           >
             <motion.div
-              className="bg-white w-full max-w-4xl rounded-xl shadow-xl overflow-hidden flex flex-col md:flex-row"
+              className="bg-white w-full max-w-4xl rounded-xl shadow-xl overflow-hidden flex flex-col md:flex-row max-h-[90vh]"
               variants={modalVariants}
               initial="hidden"
               animate="visible"
               exit="exit"
               onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside modal
             >
-              {/* Invitation preview area */}
-              <div className="md:w-3/5 p-6 bg-wedding-secondary relative">
+              {/* Invitation preview area with scrollable content */}
+              <div className="md:w-3/5 p-6 bg-wedding-secondary relative h-[60vh] md:h-[90vh] overflow-hidden flex flex-col">
                 <h3 className="text-xl font-medium mb-4 text-wedding-dark">給 {selectedGuest.name} 的邀請函</h3>
                 
-                {isGenerating ? (
-                  /* Loading state during generation or update */
-                  <div className="h-full flex flex-col items-center justify-center space-y-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-wedding-dark"></div>
-                    <p className="text-wedding-dark">正在處理邀請函，請稍候...</p>
-                  </div>
-                ) : (
-                  /* Invitation content display */
-                  <div className="bg-white rounded-lg p-6 shadow-inner relative min-h-[400px]">
-                    <img 
-                      src={templateImage} 
-                      alt="邀請函背景" 
-                      className="absolute inset-0 w-full h-full object-cover opacity-30 rounded-lg" 
-                    />
-                    <div className="relative z-10">
-                      <pre className="font-serif text-wedding-dark whitespace-pre-wrap">
-                        {selectedGuest.invitationContent}
-                      </pre>
+                {/* Content container with overflow scroll */}
+                <div className="flex-grow overflow-y-auto">
+                  {/* Check if this specific guest is currently being generated */}
+                  {generatingGuestId === selectedGuest.id ? (
+                    /* Loading state during generation or update */
+                    <div className="h-full flex flex-col items-center justify-center space-y-4">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-wedding-dark"></div>
+                      <p className="text-wedding-dark">正在處理邀請函，請稍候...</p>
                     </div>
-                  </div>
-                )}
+                  ) : !selectedGuest.invitationContent ? (
+                    /* 顯示生成按鈕 */
+                    <div className="bg-white rounded-lg p-6 shadow-inner flex flex-col items-center justify-center h-[400px]">
+                      <svg className="w-16 h-16 text-wedding-accent mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                      </svg>
+                      <p className="text-wedding-dark mb-6">尚未為此賓客生成邀請函</p>
+                      <button 
+                        className="px-4 py-2 bg-wedding-accent text-white rounded-lg hover:bg-wedding-accent-dark transition-colors"
+                        onClick={handleGenerateInvitation}
+                        disabled={generatingGuestId === selectedGuest.id}
+                      >
+                        點擊生成邀請函
+                      </button>
+                    </div>
+                  ) : (
+                    /* Invitation content display with scrollable content */
+                    <div className="bg-[#ffe1e6] rounded-lg p-6 shadow-inner relative min-h-[400px] max-h-[65vh] overflow-y-auto">
+                      <img 
+                        src={templateImage} 
+                        alt="邀請函背景" 
+                        className="absolute inset-0 w-full h-full object-cover opacity-10 rounded-lg" 
+                        style={{ backgroundColor: '#ffe1e6' }}
+                      />
+                      <div className="relative z-10">
+                        <pre className="font-serif text-black whitespace-pre-wrap text-black font-medium">
+                          {selectedGuest.invitationContent}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               
-              {/* Sidebar area - switches between edit mode and info mode */}
+              {/* Sidebar area (Guest information or Edit interface) */}
               <AnimatePresence mode="wait">
                 {editMode ? (
-                  /* Edit mode sidebar */
+                  /* Edit mode sidebar with scrollable content */
                   <motion.div 
-                    className="md:w-2/5 p-6 bg-white"
+                    className="md:w-2/5 p-6 bg-white h-[60vh] md:h-[90vh] overflow-y-auto"
                     variants={sidebarVariants}
                     initial="hidden"
                     animate="visible"
@@ -574,37 +787,38 @@ const PreviewPage: React.FC = () => {
                     key="edit"
                   >
                     <h3 className="text-xl font-medium mb-4 text-wedding-dark">編輯邀請函</h3>
-                    <p className="text-sm text-gray-500 mb-4">請提供您希望修改的內容或特別要求</p>
+                    <p className="text-sm text-gray-500 mb-4">提供修改意見，AI會重新生成邀請函</p>
                     
-                    {/* Feedback textarea for customization */}
-                    <textarea 
-                      className="w-full h-48 p-3 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-wedding-accent"
-                      placeholder="例如：希望增加更多關於我們共同回憶的內容，或者調整稱呼方式..."
-                      value={invitationFeedback}
-                      onChange={(e) => setInvitationFeedback(e.target.value)}
-                    ></textarea>
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">修改意見</label>
+                      <textarea 
+                        className="w-full h-40 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-wedding-accent"
+                        placeholder="請描述您想要如何修改邀請函內容，例如：'更加正式一些'、'添加有關我們旅行的回憶'、'請強調誠摯的邀請'等。"
+                        value={invitationFeedback}
+                        onChange={(e) => setInvitationFeedback(e.target.value)}
+                      ></textarea>
+                    </div>
                     
-                    {/* Action buttons */}
-                    <div className="flex space-x-4 mt-4">
-                      <button 
-                        className="btn-primary py-2"
-                        onClick={handleSaveInvitationFeedback}
-                        disabled={isGenerating || !invitationFeedback.trim()}
-                      >
-                        {isGenerating ? '處理中...' : '儲存修改'}
-                      </button>
-                      <button 
-                        className="btn-secondary py-2 bg-gray-500"
+                    <div className="flex justify-between mt-6">
+                      <button
+                        className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
                         onClick={handleCancelEdit}
                       >
                         取消
                       </button>
+                      <button
+                        className="px-4 py-2 bg-wedding-accent text-white rounded-lg hover:bg-wedding-accent-dark transition-colors"
+                        onClick={handleSaveInvitationFeedback}
+                        disabled={generatingGuestId === selectedGuest.id || !invitationFeedback.trim()}
+                      >
+                        保存修改
+                      </button>
                     </div>
                   </motion.div>
                 ) : (
-                  /* Info mode sidebar (guest details) */
+                  /* Info mode sidebar (guest details) with scrollable content */
                   <motion.div 
-                    className="md:w-2/5 p-6 flex flex-col justify-between"
+                    className="md:w-2/5 p-6 flex flex-col justify-between h-[60vh] md:h-[90vh] overflow-y-auto"
                     variants={sidebarVariants}
                     initial="hidden"
                     animate="visible"
@@ -612,62 +826,48 @@ const PreviewPage: React.FC = () => {
                     key="info"
                   >
                     <div>
-                      <h3 className="text-xl font-medium mb-4 text-wedding-dark">賓客資訊</h3>
+                      <h3 className="text-xl font-medium mb-4 text-wedding-dark">賓客信息</h3>
                       
-                      {/* Guest information display */}
-                      <div className="space-y-4">
+                      <div className="space-y-4 overflow-y-auto max-h-[50vh]">
                         <div>
-                          <h4 className="font-medium text-wedding-dark">姓名</h4>
-                          <p>{selectedGuest.name}</p>
+                          <h4 className="font-medium text-wedding-dark mb-1">關係</h4>
+                          <p className="text-gray-600">{selectedGuest.relationship || '未指定'}</p>
                         </div>
                         
                         <div>
-                          <h4 className="font-medium text-wedding-dark">關係</h4>
-                          <p>{selectedGuest.relationship}</p>
+                          <h4 className="font-medium text-wedding-dark mb-1">相識經過</h4>
+                          <p className="text-gray-600">{selectedGuest.howMet || '未指定'}</p>
                         </div>
                         
                         <div>
-                          <h4 className="font-medium text-wedding-dark">電子郵件</h4>
-                          <p>{selectedGuest.email}</p>
+                          <h4 className="font-medium text-wedding-dark mb-1">共同回憶</h4>
+                          <p className="text-gray-600">{selectedGuest.memories || '未指定'}</p>
                         </div>
                         
-                        {selectedGuest.phone && (
-                          <div>
-                            <h4 className="font-medium text-wedding-dark">電話</h4>
-                            <p>{selectedGuest.phone}</p>
-                          </div>
-                        )}
-                        
-                        {selectedGuest.howMet && (
-                          <div>
-                            <h4 className="font-medium text-wedding-dark">相識方式</h4>
-                            <p>{selectedGuest.howMet}</p>
-                          </div>
-                        )}
-                        
-                        {selectedGuest.memories && (
-                          <div>
-                            <h4 className="font-medium text-wedding-dark">共同回憶</h4>
-                            <p>{selectedGuest.memories}</p>
-                          </div>
-                        )}
+                        <div>
+                          <h4 className="font-medium text-wedding-dark mb-1">特殊喜好/興趣</h4>
+                          <p className="text-gray-600">{selectedGuest.preferences || '未指定'}</p>
+                        </div>
                       </div>
                     </div>
                     
-                    {/* Action buttons */}
                     <div className="mt-6 space-y-4">
-                      <button 
-                        className="w-full btn-primary py-2"
+                      <button
+                        className="w-full px-4 py-2 bg-wedding-accent text-white rounded-lg hover:bg-wedding-accent-dark transition-colors flex items-center justify-center"
                         onClick={handleEditMode}
+                        disabled={!selectedGuest.invitationContent}
                       >
+                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
                         編輯邀請函
                       </button>
                       
-                      <button 
-                        className="w-full btn-secondary py-2"
+                      <button
+                        className="w-full px-4 py-2 border border-wedding-accent text-wedding-accent rounded-lg hover:bg-wedding-secondary transition-colors"
                         onClick={closeModal}
                       >
-                        關閉
+                        關閉預覽
                       </button>
                     </div>
                   </motion.div>
