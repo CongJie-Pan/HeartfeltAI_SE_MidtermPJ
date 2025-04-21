@@ -22,9 +22,9 @@ import { GuestInfo } from '../types';
 import api from '../services/api';
 
 /**
- * 驗證電子郵件格式是否有效
- * @param email 需要驗證的電子郵件地址
- * @returns 是否有效
+ * Validates whether the provided email address has a correct format
+ * @param email The email address to validate
+ * @returns Whether the email address is valid
  */
 const validateEmail = (email: string): boolean => {
   const re = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
@@ -67,7 +67,7 @@ const ConfirmationPage: React.FC = () => {
    * Calls the email health check API to verify email service configuration
    */
   const checkEmailService = async () => {
-    // 將狀態設置為"檢查中"
+    // Set email service status to "checking"
     setEmailServiceStatus({
       status: 'checking',
       message: '正在檢查郵件服務狀態...'
@@ -220,7 +220,7 @@ const ConfirmationPage: React.FC = () => {
    * Updates all guests' status after successful sending
    */
   const handleSendAll = async () => {
-    // 檢查郵件服務狀態
+    // Check email service status
     if (emailServiceStatus.status !== 'ok') {
       if (window.confirm(`郵件服務可能存在問題: ${emailServiceStatus.message}\n\n是否要重新檢查郵件服務狀態?`)) {
         await checkEmailService();
@@ -228,13 +228,13 @@ const ConfirmationPage: React.FC = () => {
       }
     }
     
-    // 檢查賓客列表
+    // Check guest list
     if (state.guests.length === 0) {
       setError('目前沒有賓客可以發送邀請函。');
       return;
     }
     
-    // 確保有 coupleInfoId
+    // Ensure there is a coupleInfoId
     if (!state.guests[0]?.coupleInfoId) {
       setError('無法獲取新人ID，請重新整理頁面後再試。');
       return;
@@ -257,18 +257,18 @@ const ConfirmationPage: React.FC = () => {
       }
     }
     
-    // 設置批量發送狀態
-        setIsSending(true);
-        setError(null);
+    // Set batch sending status
+    setIsSending(true);
+    setError(null);
     
     try {
-      // 獲取 coupleInfoId (使用第一位賓客的 coupleInfoId)
-      //const coupleInfoId = state.guests[0].coupleInfoId;
+      // Get coupleInfoId (use the coupleInfoId of the first guest)
+      const coupleInfoId = state.guests[0].coupleInfoId;
       
-      // 調用批量發送 API，傳入 coupleInfoId
-      //const response = await api.emails.sendAll(coupleInfoId);
+      // Call the batch sending API, passing in coupleInfoId
+      const response = await api.emails.sendAll(coupleInfoId);
       
-      // 更新所有賓客的狀態為 'sent'
+      // Update all guests' status to 'sent'
       for (const guest of state.guests) {
           dispatch({
             type: 'UPDATE_INVITATION',
@@ -280,15 +280,18 @@ const ConfirmationPage: React.FC = () => {
           });
       }
       
-      // 顯示成功訊息
-      //alert(`已成功發送 ${response.data.sent} 封邀請函！${response.data.failed > 0 ? `\n${response.data.failed} 封邀請函發送失敗。` : ''}`);
+      // Show success message with proper fallback for counts
+      const successCount = response?.data?.results?.success?.length || 0;
+      const failedCount = response?.data?.results?.failed?.length || 0;
       
-      // 完成後進入下一步
+      alert(`已成功發送 ${successCount || state.guests.length} 封邀請函！${failedCount > 0 ? `\n${failedCount} 封邀請函發送失敗。` : ''}`);
+      
+      // After completion, go to the next step
       nextStep();
     } catch (err: unknown) {
       console.error('批量發送邀請函時出錯:', err);
       
-      // 獲取詳細錯誤訊息
+      // Get detailed error message
       let errorMessage = '批量發送邀請函時出錯，請稍後再試。';
       if (err && typeof err === 'object' && 'response' in err && 
           err.response && typeof err.response === 'object' && 'data' in err.response && 
@@ -298,11 +301,11 @@ const ConfirmationPage: React.FC = () => {
       
       setError(errorMessage);
       
-      // 提供故障診斷建議
+        // Provide troubleshooting suggestions
       if (emailServiceStatus.status !== 'ok') {
         setError(`${errorMessage}\n\n郵件服務診斷: ${emailServiceStatus.message}\n${emailServiceStatus.troubleshooting || ''}`);
       } else {
-        // 重新檢查郵件服務狀態
+        // Check email service status again
         checkEmailService();
       }
     } finally {

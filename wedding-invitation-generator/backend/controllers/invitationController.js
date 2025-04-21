@@ -267,7 +267,7 @@ exports.generateInvitation = async (req, res) => {
         include: { coupleInfo: true }
       });
       
-      // 記錄資料庫查詢結果
+      // Log database query result
       logger.debug(`Database query result for guest [${traceId}]`, {
         guestId,
         found: !!guest,
@@ -276,7 +276,7 @@ exports.generateInvitation = async (req, res) => {
         timestamp: new Date().toISOString()
       });
     } catch (dbError) {
-      // 詳細記錄資料庫錯誤，可能與遷移相關
+      // Log detailed database error, possibly related to migration
       logger.error(`Database error when fetching guest [${traceId}]`, {
         error: dbError.message,
         stack: dbError.stack,
@@ -300,7 +300,7 @@ exports.generateInvitation = async (req, res) => {
       return res.status(404).json({ message: '找不到此賓客資料' });
     }
     
-    // 檢查關聯數據是否完整 - 可能指向資料庫遷移問題
+    // Check if the related data is complete - possibly pointing to database migration issues
     if (!guest.coupleInfo) {
       logger.error(`Guest found but missing coupleInfo relation [${traceId}]`, {
         guestId,
@@ -390,7 +390,7 @@ exports.generateInvitation = async (req, res) => {
       
       const updateDuration = new Date() - beforeUpdate;
       
-      // 記錄資料庫更新結果詳情
+      // Log database update result details
       logger.info(`Database update completed [${traceId}]`, {
         guestId,
         success: !!updatedGuest,
@@ -400,7 +400,7 @@ exports.generateInvitation = async (req, res) => {
         traceId
       });
       
-      // 如果存儲的內容與生成的內容不符，記錄警告
+      // If the saved content differs from the generated content, log a warning
       if (updatedGuest.invitationContent !== invitationContent) {
         logger.warn(`Saved invitation content differs from generated content [${traceId}]`, {
           guestId,
@@ -411,7 +411,7 @@ exports.generateInvitation = async (req, res) => {
         });
       }
     } catch (dbUpdateError) {
-      // 詳細記錄資料庫更新錯誤，可能與遷移和模型結構有關
+      // Log detailed database update error, possibly related to migration and model structure
       logger.error(`Failed to save invitation to database [${traceId}]`, {
         error: dbUpdateError.message,
         stack: dbUpdateError.stack,
@@ -428,7 +428,7 @@ exports.generateInvitation = async (req, res) => {
         }
       });
       
-      // 即使無法保存到資料庫，也返回生成的內容
+      // Even if saving to the database fails, still return the generated invitation content
       return res.status(200).json({
         message: '邀請函已生成但未能保存到資料庫',
         invitation: invitationContent,
@@ -555,7 +555,7 @@ ${feedbackText}
         // Get the regenerated invitation content
         let newContent = completion.choices[0].message.content;
         
-        // 檢查並確保內容在約280字左右
+        // Check and ensure the content is roughly 280 characters
         if (newContent.length > 350) {
           logger.warn(`Feedback-generated invitation exceeds target length`, {
             guestId,
@@ -563,7 +563,7 @@ ${feedbackText}
             targetLength: 280
           });
           
-          // 簡單截斷過長的內容，並確保結尾完整
+          // Simply truncate overly long content while preserving a clear and complete ending
           newContent = newContent.substring(0, 270) + '...\n\n' + 
                       `${guest.coupleInfo.groomName} & ${guest.coupleInfo.brideName} 敬上`;
         }
@@ -654,7 +654,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
     throw new Error('AI service not configured');
   }
   
-  // 檢查輸入參數數據完整性 - 避免在 AI 生成時遇到 null 或 undefined 值
+  // Check input parameter data integrity - avoid null or undefined values in AI generation
   const missingFields = [];
   if (!guest.name) missingFields.push('guest.name');
   if (!guest.relationship) missingFields.push('guest.relationship');
@@ -688,7 +688,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
     "Create a concise yet heartfelt wedding invitation that deeply reflects the unique relationship between the couple and their guest. " +
     "The invitation must be highly personalized based on the specific relationship and shared memories provided. " +
     "IMPORTANT RULES: " +
-    "1. Keep the invitation VERY concise, between 150-200 Chinese characters maximum. " +
+    "1. Keep the invitation concise, roughly in 300 Chinese characters maximum. " +
     "2. Focus on quality over quantity - brief but meaningful. " +
     "3. ALWAYS incorporate specific personal details provided about the guest (memories, how they met, preferences). " +
     "4. Create a warm, elegant tone appropriate for a wedding. " +
@@ -719,7 +719,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
 
 重要要求:
 1. 必須使用繁體中文
-2. 邀請函必須非常精簡，控制在150-200字之間
+2. 邀請函需精簡，控制在300字上下
 3. 根據賓客資料中的「相識方式」、「共同回憶」和「個人喜好」來個人化邀請函內容
 4. 如果提供了「共同回憶」，一定要巧妙融入邀請函中
 5. 結尾署名格式為: ${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上
@@ -731,7 +731,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
   try {
     // Define API call function with retry capabilities
     const generateContent = async () => {
-      // 記錄 API 請求開始
+      // Log the start of the API request
       logger.debug(`Sending request to DeepSeek API [${operationId}]`, {
         operationId,
         guestId: guest.id,
@@ -756,7 +756,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
       
       const apiRequestDuration = Date.now() - apiRequestStart;
       
-      // 記錄 API 響應詳情
+      // Log API response details
       logger.debug(`DeepSeek API response received [${operationId}]`, {
         operationId,
         requestDuration: apiRequestDuration,
@@ -767,7 +767,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
         timestamp: new Date().toISOString()
       });
       
-      // 檢查 API 響應結構
+      // Validate the API response structure to ensure it conforms to the expected format and prevent processing invalid data
       if (!completion.choices || !completion.choices[0] || !completion.choices[0].message) {
         logger.error(`DeepSeek API returned unexpected response structure [${operationId}]`, {
           operationId,
@@ -779,7 +779,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
       
       let content = completion.choices[0].message.content.trim();
       
-      // 檢查並確保內容在約280字左右
+      // Check and ensure the content is roughly 280 characters
       if (content.length > 350) {
         logger.warn(`Generated invitation exceeds target length [${operationId}]`, {
           operationId,
@@ -787,7 +787,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
           targetLength: 280
         });
         
-        // 簡單截斷過長的內容，並確保結尾完整
+        // Simply truncate overly long content while preserving a clear and complete ending
         content = content.substring(0, 270) + '...\n\n' + 
                   `${coupleInfo.groomName} & ${coupleInfo.brideName} 敬上`;
       }
@@ -798,7 +798,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
     // Execute with retry mechanism for transient failures
     const content = await executeWithRetry(generateContent, 3, 1000);
     
-    // 檢查並記錄內容品質
+    // Check and log content quality
     if (!content || content.length < 50) {
       logger.warn(`DeepSeek generated unusually short content [${operationId}]`, {
         operationId,
@@ -808,7 +808,7 @@ async function generateInvitationWithAI(guest, coupleInfo) {
       });
     }
     
-    // 記錄最終生成內容的長度
+    // Log the final generated content length
     logger.info(`Generated invitation length: ${content.length} characters [${operationId}]`);
     
     // Calculate and log performance metrics
